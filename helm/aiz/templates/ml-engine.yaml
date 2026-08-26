@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aiz-ml-engine
+  namespace: aiz
+  labels: { app: aiz-ml-engine }
+spec:
+  replicas: {{ .Values.mlEngine.replicas }}
+  selector:
+    matchLabels: { app: aiz-ml-engine }
+  template:
+    metadata:
+      labels: { app: aiz-ml-engine }
+    spec:
+      containers:
+        - name: ml-engine
+          image: "{{ .Values.global.imageRegistry }}/{{ .Values.mlEngine.image }}:{{ .Values.mlEngine.tag }}"
+          imagePullPolicy: Always
+          envFrom:
+            - secretRef: { name: aiz-secrets }
+            - configMapRef: { name: aiz-config }
+          env:
+            - name: BACKEND_URL
+              value: "http://backend:8000"
+          resources: {{ toYaml .Values.mlEngine.resources | nindent 12 }}
+          volumeMounts:
+            - name: models
+              mountPath: /app/models
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: ml-models-pvc
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ml-models-pvc
+  namespace: aiz
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 5Gi

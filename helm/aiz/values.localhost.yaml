@@ -1,0 +1,32 @@
+# ── Localhost overrides (no TLS, no domain required) ──
+# Usage: helm upgrade --install aiz ./helm/aiz -f helm/aiz/values.localhost.yaml
+
+global:
+  domain: localhost
+  imageRegistry: ghcr.io/your-github-username   # Not used for localhost pull
+
+ingress:
+  enabled: true
+  className: traefik
+  tls: false    # No SSL for localhost — plain HTTP
+
+backend:
+  replicas: 1   # Save RAM on laptop
+
+frontend:
+  replicas: 1
+
+mlEngine:
+  replicas: 1
+
+postgresql:
+  storageSize: 5Gi
+
+mlflow:
+  enabled: false   # Skip MLflow to save RAM initially
+
+grafana:
+  enabled: false   # Skip Grafana initially
+
+duckdns:
+  enabled: false   # No domain updates needed for localhost

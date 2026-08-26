@@ -1,0 +1,52 @@
+global:
+  domain: aiz-trade.duckdns.org
+  imageRegistry: ghcr.io/your-github-username  # Change to your GitHub username
+
+backend:
+  image: aiz-backend
+  tag: latest
+  replicas: 2
+  resources:
+    requests: { cpu: "200m", memory: "256Mi" }
+    limits:   { cpu: "1",    memory: "1Gi" }
+
+mlEngine:
+  image: aiz-ml-engine
+  tag: latest
+  replicas: 1
+  resources:
+    requests: { cpu: "500m", memory: "1Gi" }
+    limits:   { cpu: "2",    memory: "4Gi" }
+
+frontend:
+  image: aiz-frontend
+  tag: latest
+  replicas: 2
+  resources:
+    requests: { cpu: "50m",  memory: "64Mi" }
+    limits:   { cpu: "200m", memory: "256Mi" }
+
+postgresql:
+  enabled: true
+  storageSize: 10Gi
+  storageClass: local-path   # K3s default storage class
+
+redis:
+  enabled: true
+  storageSize: 1Gi
+
+mlflow:
+  enabled: true
+  storageSize: 5Gi
+
+grafana:
+  enabled: true
+  storageSize: 2Gi
+
+ingress:
+  enabled: true
+  className: traefik         # K3s default ingress
+  tls: true                  # Let's Encrypt via cert-manager
+
+duckdns:
+  enabled: true              # Auto-updates DuckDNS every 5 minutes

@@ -1,0 +1,31 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: aiz
+  labels:
+    name: aiz
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aiz-config
+  namespace: aiz
+data:
+  APP_ENV: "production"
+  POSTGRES_HOST: "postgresql"
+  POSTGRES_PORT: "5432"
+  REDIS_HOST: "redis"
+  REDIS_PORT: "6379"
+  MLFLOW_TRACKING_URI: "http://mlflow:5000"
+  TRADING_MODE: "paper"
+  ACTIVE_BROKER: "paper"
+  WATCHLIST: "RELIANCE,TCS,HDFCBANK,INFY,WIPRO,ICICIBANK,BAJFINANCE,SBIN,ITC,KOTAKBANK"
+  MARKET_OPEN: "09:15"
+  MARKET_CLOSE: "15:30"
+  MAX_POSITIONS: "5"
+  MAX_RISK_PER_TRADE: "2"
+  STOP_LOSS_PCT: "1.5"
+  TARGET_PCT: "3.0"
+  PREDICTION_INTERVAL: "60"
+  MIN_CONFIDENCE: "65"
+  TRAINING_LOOKBACK_YEARS: "3"
