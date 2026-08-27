@@ -61,3 +61,23 @@ app.include_router(websocket.router, prefix="/ws",            tags=["websocket"]
 @app.get("/health")
 async def health():
     return {"status": "ok", "service": "aiz-backend", "version": "1.0.0"}
+
+
+@app.get("/api/status")
+async def api_status():
+    """Public status endpoint — frontend uses this to verify API connection."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    ist_now = datetime.now(ZoneInfo("Asia/Kolkata"))
+    weekday = ist_now.weekday()
+    t = ist_now.time()
+    from datetime import time as dtime
+    market_open = weekday < 5 and dtime(9, 15) <= t <= dtime(15, 30)
+    return {
+        "api": "connected",
+        "server_time_ist": ist_now.strftime("%Y-%m-%d %H:%M:%S IST"),
+        "market_open": market_open,
+        "weekday": ist_now.strftime("%A"),
+        "broker": settings.active_broker,
+        "trading_mode": settings.trading_mode,
+    }

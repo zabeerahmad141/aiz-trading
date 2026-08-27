@@ -105,10 +105,11 @@ class PaperBroker(BrokerBase):
         return round(self.capital, 2)
 
     async def is_market_open(self) -> bool:
-        now = datetime.now()
+        # Always use IST regardless of server timezone
+        from zoneinfo import ZoneInfo
+        now = datetime.now(ZoneInfo("Asia/Kolkata"))
         if now.weekday() >= 5:  # Saturday/Sunday
             return False
         open_t = dtime(9, 15)
         close_t = dtime(15, 30)
-        current = now.time()
-        return open_t <= current <= close_t
+        return open_t <= now.time() <= close_t

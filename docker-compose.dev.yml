@@ -32,8 +32,9 @@ services:
     ports: ["6379:6379"]
     command: redis-server --requirepass ${REDIS_PASSWORD:-devredis}
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli -a ${REDIS_PASSWORD:-devredis} ping"]
       interval: 10s
+      retries: 5
 
   backend:
     build:
@@ -44,13 +45,17 @@ services:
     environment:
       POSTGRES_HOST: postgresql
       REDIS_HOST: redis
-      APP_ENV: development
+      APP_ENV: production
     depends_on:
       postgresql: { condition: service_healthy }
       redis:       { condition: service_healthy }
-    volumes:
-      - ./backend:/app   # Hot reload in dev
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
 
   ml-engine:
     build:
@@ -60,9 +65,11 @@ services:
     environment:
       POSTGRES_HOST: postgresql
       REDIS_HOST: redis
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-devredis}
       BACKEND_URL: http://backend:8000
     depends_on:
-      - backend
+      backend: { condition: service_healthy }
+    restart: unless-stopped
     volumes:
       - ml_models:/app/models
 
@@ -73,6 +80,7 @@ services:
     ports: ["3000:80"]
     depends_on:
       - backend
+    restart: unless-stopped
 
 volumes:
   pgdata:

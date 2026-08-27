@@ -15,6 +15,6 @@ RUN adduser --disabled-password --gecos '' mluser && chown -R mluser /app
 USER mluser
 
 HEALTHCHECK --interval=60s --timeout=15s --start-period=30s --retries=3 \
-  CMD python -c "import redis; r=redis.Redis(host='redis'); r.ping()" || exit 1
+  CMD python -c "import os, redis; r=redis.Redis(host='redis', password=os.getenv('REDIS_PASSWORD')); r.ping()" || exit 1
 
-CMD ["python", "src/main.py"]
+CMD ["python", "-m", "src.main"]

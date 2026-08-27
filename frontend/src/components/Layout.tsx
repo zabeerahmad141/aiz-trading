@@ -21,9 +21,9 @@ const navSections = [
   {
     label: 'Analytics',
     items: [
-      { to: '/backtest', label: 'Backtest', icon: Settings },
-      { to: '/models', label: 'ML Models', icon: Brain, badge: '3', badgeGold: true },
-      { to: '/reports', label: 'Reports', icon: TrendingUp },
+      { to: '/backtest', label: 'Stock Screener', icon: Settings },
+      { to: '/models',   label: 'ML Models',      icon: Brain, badge: '3', badgeGold: true },
+      { to: '/reports',  label: 'Reports',        icon: TrendingUp },
     ],
   },
   {
