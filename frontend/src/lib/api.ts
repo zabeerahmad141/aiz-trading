@@ -44,6 +44,10 @@ export const getPnLChart = (period = 'today') => api.get(`/portfolio/pnl-chart?p
 export const getQuotes = () => api.get('/market/quotes');
 export const getOHLCV = (symbol: string, period = '1d', interval = '5m') =>
   api.get(`/market/ohlcv/${symbol}?period=${period}&interval=${interval}`);
+export const getScreener = () => api.get('/market/screener');
+// /api/status is at root level in backend (not under /api prefix router)
+// nginx proxies /api/ → backend, so this hits backend:8000/api/status correctly
+export const getApiStatus = () => api.get('/status');
 
 // Users (admin)
 export const listUsers = () => api.get('/users/');

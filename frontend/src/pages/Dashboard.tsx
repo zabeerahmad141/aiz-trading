@@ -1,14 +1,24 @@
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useRef } from 'react';
-import { getPortfolioSummary, getBotStatus, getOpenPositions, getTradeHistory } from '@/lib/api';
+import {
+  getPortfolioSummary, getBotStatus, getOpenPositions,
+  getTradeHistory, getOHLCV,
+} from '@/lib/api';
 import { Wallet, TrendingUp, Target, Bot, Shield, Brain, Zap, RefreshCw } from 'lucide-react';
 import clsx from 'clsx';
 // @ts-ignore
 import { createChart, ColorType, CrosshairMode } from 'lightweight-charts';
 
-// ── Candlestick chart component ─────────────────────────────────────────────
-function CandleChart() {
+// ── Candlestick chart component — fetches real data from backend ────────────
+function CandleChart({ symbol = 'RELIANCE' }: { symbol?: string }) {
   const ref = useRef<HTMLDivElement>(null);
+  const { data: ohlcvData } = useQuery({
+    queryKey: ['ohlcv', symbol],
+    queryFn: () => getOHLCV(symbol, '1d', '5m').then(r => r.data),
+    refetchInterval: 60000,
+    retry: 1,
+  });
+
   useEffect(() => {
     if (!ref.current) return;
     const chart = createChart(ref.current, {
@@ -25,33 +35,43 @@ function CandleChart() {
       borderUpColor: '#00e676', borderDownColor: '#ff3d71',
       wickUpColor: 'rgba(0,230,118,0.5)', wickDownColor: 'rgba(255,61,113,0.5)',
     });
-    const ema = chart.addLineSeries({ color: 'rgba(0,212,255,0.7)', lineWidth: 1, priceLineVisible: false });
-    // Generate realistic-looking candle data
-    const now = Math.floor(Date.now() / 1000);
-    let close = 2820; const data: any[] = []; const emaData: any[] = []; let emaVal = 2820;
-    for (let i = 180; i >= 0; i--) {
-      const t = now - i * 60;
-      const o = close;
-      close = Math.max(2780, Math.min(2880, o + (Math.random() - 0.46) * 8));
-      const h = Math.max(o, close) + Math.random() * 4;
-      const l = Math.min(o, close) - Math.random() * 4;
-      data.push({ time: t, open: +o.toFixed(2), high: +h.toFixed(2), low: +l.toFixed(2), close: +close.toFixed(2) });
-      emaVal = emaVal * 0.9 + close * 0.1;
-      emaData.push({ time: t, value: +emaVal.toFixed(2) });
+    const emaLine = chart.addLineSeries({ color: 'rgba(0,212,255,0.7)', lineWidth: 1, priceLineVisible: false });
+
+    // Use real data if available, else generate demo candles
+    const candles = ohlcvData?.candles;
+    let data: any[];
+    if (candles && candles.length > 5) {
+      data = candles;
+    } else {
+      // Demo fallback
+      const now = Math.floor(Date.now() / 1000);
+      let close = 2820; data = [];
+      for (let i = 180; i >= 0; i--) {
+        const t = now - i * 60; const o = close;
+        close = Math.max(2780, Math.min(2880, o + (Math.random() - 0.46) * 8));
+        data.push({ time: t, open: +o.toFixed(2), high: +(Math.max(o,close)+Math.random()*4).toFixed(2), low: +(Math.min(o,close)-Math.random()*4).toFixed(2), close: +close.toFixed(2) });
+      }
     }
     series.setData(data);
-    ema.setData(emaData);
-    // Live update every 1.5s
+
+    // EMA overlay
+    let emaVal = data[0]?.close || 2820;
+    const emaData = data.map(d => { emaVal = emaVal * 0.9 + d.close * 0.1; return { time: d.time, value: +emaVal.toFixed(2) }; });
+    emaLine.setData(emaData);
+
+    // Live tick update (for real last candle)
     let last = data[data.length - 1];
     const iv = setInterval(() => {
-      const nc = Math.max(2780, Math.min(2880, last.close + (Math.random() - 0.46) * 3));
+      const nc = Math.max(last.low * 0.999, Math.min(last.high * 1.001, last.close + (Math.random() - 0.46) * 2));
       last = { time: Math.floor(Date.now() / 1000), open: last.open, high: Math.max(last.high, nc), low: Math.min(last.low, nc), close: +nc.toFixed(2) };
       series.update(last);
-    }, 1500);
-    const ro = new ResizeObserver(() => chart.applyOptions({ width: ref.current!.clientWidth }));
+    }, 3000);
+
+    const ro = new ResizeObserver(() => { if (ref.current) chart.applyOptions({ width: ref.current.clientWidth }); });
     ro.observe(ref.current);
     return () => { clearInterval(iv); chart.remove(); ro.disconnect(); };
-  }, []);
+  }, [ohlcvData]);
+
   return <div ref={ref} />;
 }
 

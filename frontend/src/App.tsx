@@ -8,16 +8,15 @@ import TradeHistory from '@/pages/TradeHistory';
 import AIEngine from '@/pages/AIEngine';
 import Settings from '@/pages/Settings';
 import Users from '@/pages/Users';
+import Screener from '@/pages/Screener';
 
-// Stub pages for nav items (expand these later)
 const Stub = ({ title, icon }: { title: string; icon: string }) => (
   <div className="glass-card p-10 text-center text-text-secondary">
     <div className="text-5xl mb-4">{icon}</div>
     <h2 className="text-xl font-bold mb-2">{title}</h2>
-    <p className="text-sm text-text-muted">This section is coming soon. Build it out using the patterns in Dashboard.tsx and the docs/MASTER.md guide.</p>
+    <p className="text-sm text-text-muted">Coming soon — build it using Dashboard.tsx as a template.</p>
   </div>
 );
-const Backtest = () => <Stub title="Backtest Engine" icon="🔬" />;
 const MLModels = () => <Stub title="ML Models" icon="🧠" />;
 const Reports  = () => <Stub title="Reports" icon="📊" />;
 const Alerts   = () => <Stub title="Alerts" icon="🔔" />;
@@ -43,7 +42,7 @@ export default function App() {
         <Route path="markets"   element={<Markets />} />
         <Route path="history"   element={<TradeHistory />} />
         <Route path="ai-engine" element={<AIEngine />} />
-        <Route path="backtest"  element={<Backtest />} />
+        <Route path="backtest"  element={<Screener />} />
         <Route path="models"    element={<MLModels />} />
         <Route path="reports"   element={<Reports />} />
         <Route path="alerts"    element={<Alerts />} />

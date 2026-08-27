@@ -110,7 +110,8 @@ class AngelOneBroker(BrokerBase):
 
     async def is_market_open(self) -> bool:
         from datetime import datetime, time as dtime
-        now = datetime.now()
+        from zoneinfo import ZoneInfo
+        now = datetime.now(ZoneInfo("Asia/Kolkata"))
         if now.weekday() >= 5:
             return False
         return dtime(9, 15) <= now.time() <= dtime(15, 30)
