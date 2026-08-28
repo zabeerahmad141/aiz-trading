@@ -35,6 +35,7 @@ export const getMe = () => api.get('/auth/me');
 export const getBotStatus = () => api.get('/trading/status');
 export const getTradeHistory = (limit = 50) => api.get(`/trading/history?limit=${limit}`);
 export const getOpenPositions = () => api.get('/trading/positions');
+export const placeOrder = (data: object) => api.post('/trading/order', data);
 
 // Portfolio
 export const getPortfolioSummary = () => api.get('/portfolio/summary');

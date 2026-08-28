@@ -34,7 +34,7 @@ async def portfolio_summary(
     win_rate = round((wins / total * 100), 1) if total > 0 else 0.0
 
     return {
-        "portfolio_value": round(balance + total_pnl + settings.trading_capital, 2),
+        "portfolio_value": round(balance + total_pnl, 2),
         "available_balance": round(balance, 2),
         "total_pnl": round(total_pnl, 2),
         "total_trades": total,
