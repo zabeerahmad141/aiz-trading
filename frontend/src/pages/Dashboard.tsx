@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useEffect, useRef } from 'react';
 import {
   getPortfolioSummary, getBotStatus, getOpenPositions,
-  getTradeHistory, getOHLCV,
+  getTradeHistory, getOHLCV, getQuotes, getPnLChart,
 } from '@/lib/api';
 import { Wallet, TrendingUp, Target, Bot, Shield, Brain, Zap, RefreshCw } from 'lucide-react';
 import clsx from 'clsx';
@@ -37,21 +37,10 @@ function CandleChart({ symbol = 'RELIANCE' }: { symbol?: string }) {
     });
     const emaLine = chart.addLineSeries({ color: 'rgba(0,212,255,0.7)', lineWidth: 1, priceLineVisible: false });
 
-    // Use real data if available, else generate demo candles
+    // Keep the chart empty when the provider has no data, such as after market close.
     const candles = ohlcvData?.candles;
-    let data: any[];
-    if (candles && candles.length > 5) {
-      data = candles;
-    } else {
-      // Demo fallback
-      const now = Math.floor(Date.now() / 1000);
-      let close = 2820; data = [];
-      for (let i = 180; i >= 0; i--) {
-        const t = now - i * 60; const o = close;
-        close = Math.max(2780, Math.min(2880, o + (Math.random() - 0.46) * 8));
-        data.push({ time: t, open: +o.toFixed(2), high: +(Math.max(o,close)+Math.random()*4).toFixed(2), low: +(Math.min(o,close)-Math.random()*4).toFixed(2), close: +close.toFixed(2) });
-      }
-    }
+    const data: any[] = candles && candles.length > 5 ? candles : [];
+    if (!data.length) return () => chart.remove();
     series.setData(data);
 
     // EMA overlay
@@ -60,29 +49,15 @@ function CandleChart({ symbol = 'RELIANCE' }: { symbol?: string }) {
     emaLine.setData(emaData);
 
     // Live tick update (for real last candle)
-    let last = data[data.length - 1];
-    const iv = setInterval(() => {
-      const nc = Math.max(last.low * 0.999, Math.min(last.high * 1.001, last.close + (Math.random() - 0.46) * 2));
-      last = { time: Math.floor(Date.now() / 1000), open: last.open, high: Math.max(last.high, nc), low: Math.min(last.low, nc), close: +nc.toFixed(2) };
-      series.update(last);
-    }, 3000);
-
     const ro = new ResizeObserver(() => { if (ref.current) chart.applyOptions({ width: ref.current.clientWidth }); });
     ro.observe(ref.current);
-    return () => { clearInterval(iv); chart.remove(); ro.disconnect(); };
+    return () => { chart.remove(); ro.disconnect(); };
   }, [ohlcvData]);
 
-  return <div ref={ref} />;
+  return <div ref={ref} className={!ohlcvData?.candles?.length ? 'h-[300px] flex items-center justify-center text-xs text-text-muted' : undefined}>{!ohlcvData?.candles?.length && 'No market data available while the market is closed.'}</div>;
 }
 
 // ── AI Predictions panel ─────────────────────────────────────────────────────
-const AI_PREDS = [
-  { stock: 'RELIANCE', signal: 'buy',  conf: 82, target: '₹2,870' },
-  { stock: 'HDFCBANK', signal: 'buy',  conf: 76, target: '₹1,695' },
-  { stock: 'INFY',     signal: 'sell', conf: 68, target: '₹1,790' },
-  { stock: 'WIPRO',    signal: 'hold', conf: 55, target: '₹452'   },
-  { stock: 'TCS',      signal: 'buy',  conf: 71, target: '₹3,460' },
-];
 function AIPredictions() {
   return (
     <div className="glass-card">
@@ -93,27 +68,8 @@ function AIPredictions() {
         </div>
         <span className="text-[10px] text-text-muted">Next 30 min</span>
       </div>
-      <div className="px-4 py-2 divide-y divide-white/[0.04]">
-        {AI_PREDS.map(p => (
-          <div key={p.stock} className="flex items-center gap-3 py-2.5">
-            <span className="w-[68px] font-mono text-[12px] font-bold text-text-primary">{p.stock}</span>
-            <span className={clsx('text-[10px] font-bold px-2 py-0.5 rounded-full border',
-              p.signal === 'buy'  ? 'bg-brand-green/10 text-brand-green border-brand-green/30' :
-              p.signal === 'sell' ? 'bg-brand-red/10 text-brand-red border-brand-red/30' :
-                                    'bg-white/5 text-text-secondary border-white/10'
-            )}>{p.signal.toUpperCase()}</span>
-            <div className="flex-1">
-              <div className="flex justify-between text-[9px] text-text-muted mb-1">
-                <span>Confidence</span><span>{p.conf}%</span>
-              </div>
-              <div className="h-1 bg-white/5 rounded-full overflow-hidden">
-                <div className={clsx('h-full rounded-full', p.signal === 'buy' ? 'bg-brand-green' : p.signal === 'sell' ? 'bg-brand-red' : 'bg-text-muted')}
-                  style={{ width: `${p.conf}%` }} />
-              </div>
-            </div>
-            <span className="text-[11px] font-mono text-text-muted w-14 text-right">{p.target}</span>
-          </div>
-        ))}
+      <div className="px-4 py-6 text-center text-xs text-text-muted">
+        No live AI predictions are available. Predictions will appear when the ML engine publishes a signal.
       </div>
     </div>
   );
@@ -122,11 +78,11 @@ function AIPredictions() {
 // ── Model metrics ────────────────────────────────────────────────────────────
 function ModelMetrics() {
   const rows = [
-    { label: 'Accuracy',     value: '74.3%',          color: 'text-brand-green' },
-    { label: 'Sharpe Ratio', value: '2.41',            color: 'text-brand-gold'  },
-    { label: 'Max Drawdown', value: '-3.2%',           color: 'text-brand-red'   },
-    { label: 'Trained On',   value: '3Y data',         color: 'text-brand-blue'  },
-    { label: 'Model',        value: 'XGBoost v2+LSTM', color: 'text-text-secondary text-[11px]' },
+    { label: 'Accuracy', value: 'Unavailable', color: 'text-text-muted' },
+    { label: 'Sharpe Ratio', value: 'Unavailable', color: 'text-text-muted' },
+    { label: 'Max Drawdown', value: 'Unavailable', color: 'text-text-muted' },
+    { label: 'Training data', value: 'Not published', color: 'text-text-muted' },
+    { label: 'Model', value: 'XGBoost', color: 'text-text-secondary text-[11px]' },
   ];
   return (
     <div className="glass-card">
@@ -147,21 +103,14 @@ function ModelMetrics() {
 }
 
 // ── Live feed items ──────────────────────────────────────────────────────────
-const FEED = [
-  { type: 'buy',  title: 'BUY RELIANCE × 5', sub: 'AI Signal: RSI Breakout · Conf 82%', pnl: '+₹185', time: '09:42' },
-  { type: 'ai',   title: 'Model retrained',   sub: 'XGBoost v2 · Accuracy: 74.3%',       pnl: '',      time: '09:35' },
-  { type: 'sell', title: 'SELL INFY × 3',     sub: 'Target hit · Stop loss avoided',      pnl: '+₹210', time: '09:28' },
-  { type: 'buy',  title: 'BUY TCS × 2',       sub: 'AI Signal: MACD Cross · Conf 71%',   pnl: '+₹62',  time: '09:19' },
-  { type: 'sell', title: 'SELL WIPRO × 6',    sub: 'Trailing stop triggered',             pnl: '-₹48',  time: '09:15' },
-];
 function LiveFeed({ trades }: { trades?: any[] }) {
-  const items = trades && trades.length > 0 ? trades.slice(0, 5).map(t => ({
+  const items = trades?.length ? trades.slice(0, 5).map(t => ({
     type: t.action,
     title: `${t.action.toUpperCase()} ${t.symbol} × ${t.quantity}`,
     sub: t.ai_reason || (t.ai_signal ? `AI Signal · Conf ${t.ai_confidence}%` : 'Manual trade'),
     pnl: t.pnl != null ? `${t.pnl >= 0 ? '+' : ''}₹${Math.abs(t.pnl).toFixed(0)}` : '',
     time: new Date(t.entered_at).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false }),
-  })) : FEED;
+  })) : [];
 
   return (
     <div className="glass-card flex flex-col">
@@ -171,7 +120,7 @@ function LiveFeed({ trades }: { trades?: any[] }) {
         <div className="ml-auto w-1.5 h-1.5 rounded-full bg-brand-green animate-pulse" />
       </div>
       <div className="px-3 py-2 space-y-2 overflow-y-auto max-h-64">
-        {items.map((f, i) => (
+        {items.length ? items.map((f, i) => (
           <div key={i} className={clsx('flex items-center gap-2.5 p-2.5 rounded-lg border transition-colors',
             i === 0 ? 'border-brand-blue/25 bg-brand-blue/4' : 'border-white/4 bg-white/[0.015]'
           )}>
@@ -189,7 +138,7 @@ function LiveFeed({ trades }: { trades?: any[] }) {
             {f.pnl && <span className={clsx('text-[12px] font-bold font-mono flex-shrink-0', f.pnl.startsWith('-') ? 'text-brand-red' : 'text-brand-green')}>{f.pnl}</span>}
             <span className="text-[10px] text-text-muted font-mono flex-shrink-0">{f.time}</span>
           </div>
-        ))}
+        )) : <div className="py-8 text-center text-xs text-text-muted">No trading activity recorded.</div>}
       </div>
     </div>
   );
@@ -218,11 +167,16 @@ export default function Dashboard() {
   const { data: botStatus } = useQuery({ queryKey: ['botStatus'], queryFn: () => getBotStatus().then(r => r.data), refetchInterval: 5000 });
   const { data: positions } = useQuery({ queryKey: ['positions'], queryFn: () => getOpenPositions().then(r => r.data), refetchInterval: 5000 });
   const { data: trades } = useQuery({ queryKey: ['trades'], queryFn: () => getTradeHistory().then(r => r.data) });
+  const { data: quotes = [] } = useQuery({ queryKey: ['quotes'], queryFn: () => getQuotes().then(r => r.data), refetchInterval: 30000 });
+  const { data: pnlChart } = useQuery({ queryKey: ['pnl-chart', 'today'], queryFn: () => getPnLChart('today').then(r => r.data), refetchInterval: 30000 });
 
-  const portVal   = portfolio?.portfolio_value || 124350;
-  const pnl       = portfolio?.total_pnl ?? 2980;
-  const winRate   = portfolio?.win_rate ?? 74.3;
-  const tradesCnt = portfolio?.total_trades ?? 12;
+  const portVal   = portfolio?.portfolio_value ?? 0;
+  const pnl       = portfolio?.total_pnl ?? 0;
+  const winRate   = portfolio?.win_rate ?? 0;
+  const tradesCnt = portfolio?.total_trades ?? 0;
+  const hasActivity = tradesCnt > 0;
+  const reliance = quotes.find((quote: any) => quote.symbol === 'RELIANCE');
+  const formatPrice = (value?: number) => value ? `₹${value.toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : 'N/A';
 
   return (
     <div className="space-y-4 animate-[fade-in_0.3s_ease]">
@@ -241,27 +195,26 @@ export default function Dashboard() {
       </div>
 
       {/* Alert banner */}
-      <div className="flex items-center gap-3 px-4 py-2.5 rounded-xl bg-brand-green/5 border border-brand-green/20 text-xs">
-        <span className="text-brand-green text-base">✓</span>
-        <span>AI Engine executed <strong>3 BUY signals</strong> in last 15 minutes — RELIANCE, TCS, HDFCBANK ·
-          Total deployed: <strong className="text-brand-gold">₹47,250</strong></span>
-        <span className="ml-auto text-text-muted">09:39 IST</span>
+      <div className="flex items-center gap-3 px-4 py-2.5 rounded-xl bg-brand-blue/5 border border-brand-blue/20 text-xs">
+        <span className="text-brand-blue text-base">●</span>
+        <span>{hasActivity ? `${tradesCnt} recorded trades in the current portfolio.` : 'No trades recorded for the current portfolio.'}</span>
+        <span className="ml-auto text-text-muted">{botStatus?.market_open ? 'Live session' : 'Market closed'}</span>
       </div>
 
       {/* Stats row */}
       <div className="grid grid-cols-5 gap-3">
         <StatCard label="Portfolio Value" icon={Wallet} color="green"
           value={`₹${portVal.toLocaleString('en-IN')}`}
-          sub={`Capital: ₹${(portfolio?.capital || 100000).toLocaleString('en-IN')}`} />
+          sub={`Capital: ₹${(portfolio?.capital ?? 0).toLocaleString('en-IN')}`} />
         <StatCard label="Today's P&L" icon={TrendingUp} color="gold"
           value={`${pnl >= 0 ? '+' : ''}₹${Math.abs(pnl).toLocaleString('en-IN')}`}
-          sub={`${portfolio?.wins ?? 9} wins · ${portfolio?.losses ?? 3} losses`} />
+          sub={`${portfolio?.wins ?? 0} wins · ${portfolio?.losses ?? 0} losses`} />
         <StatCard label="Win Rate" icon={Target} color="blue"
           value={`${winRate}%`} sub={`${tradesCnt} total trades`} />
         <StatCard label="AI Trades Today" icon={Bot} color="blue"
-          value={tradesCnt} sub="Auto-executed by AI" />
+          value={tradesCnt} sub="Recorded trades" />
         <StatCard label="Sharpe Ratio" icon={Shield} color="gold"
-          value="2.41" sub="Max drawdown: 3.2%" />
+          value="N/A" sub="No published metrics" />
       </div>
 
       {/* Main 2-column grid */}
@@ -284,12 +237,12 @@ export default function Dashboard() {
           {/* Chart stats bar */}
           <div className="flex gap-6 px-4 py-2.5 border-b border-[var(--border)] flex-wrap">
             {[
-              { l: 'Open', v: '₹2,810.50' },
-              { l: 'High', v: '₹2,861.25', c: 'text-brand-green' },
-              { l: 'Low',  v: '₹2,798.30', c: 'text-brand-red' },
-              { l: 'LTP',  v: '₹2,847.60', c: 'text-brand-blue' },
-              { l: 'Volume', v: '18.4L' },
-              { l: 'AI Signal', v: '▲ BUY', c: 'text-brand-green' },
+              { l: 'Open', v: formatPrice(reliance?.open) },
+              { l: 'High', v: formatPrice(reliance?.high), c: 'text-brand-green' },
+              { l: 'Low',  v: formatPrice(reliance?.low), c: 'text-brand-red' },
+              { l: 'LTP',  v: formatPrice(reliance?.ltp), c: 'text-brand-blue' },
+              { l: 'Volume', v: reliance?.volume ? reliance.volume.toLocaleString('en-IN') : 'N/A' },
+              { l: 'Change', v: reliance ? `${reliance.change_pct >= 0 ? '+' : ''}${reliance.change_pct}%` : 'N/A', c: reliance?.change_pct >= 0 ? 'text-brand-green' : 'text-brand-red' },
             ].map(s => (
               <div key={s.l}>
                 <div className="text-[9px] uppercase tracking-wider text-text-muted">{s.l}</div>
@@ -300,12 +253,9 @@ export default function Dashboard() {
           {/* Indicator tags */}
           <div className="flex gap-2 px-4 py-2 flex-wrap border-b border-[var(--border)]">
             {[
-              { l: 'EMA 9: 2,839', c: 'text-brand-blue bg-brand-blue/10 border-brand-blue/20' },
-              { l: 'EMA 21: 2,821', c: 'text-brand-gold bg-brand-gold/10 border-brand-gold/20' },
-              { l: 'RSI: 62.4', c: 'text-brand-green bg-brand-green/10 border-brand-green/20' },
-              { l: 'MACD: +4.2', c: 'text-brand-blue bg-brand-blue/10 border-brand-blue/20' },
-              { l: 'BB Upper: 2,870', c: 'text-brand-gold bg-brand-gold/10 border-brand-gold/20' },
-              { l: 'Stoch: 74.1', c: 'text-brand-red bg-brand-red/10 border-brand-red/20' },
+              { l: `Change: ${reliance ? `${reliance.change_pct}%` : 'N/A'}`, c: 'text-brand-blue bg-brand-blue/10 border-brand-blue/20' },
+              { l: `Close: ${formatPrice(reliance?.close)}`, c: 'text-brand-gold bg-brand-gold/10 border-brand-gold/20' },
+              { l: `Updated: ${reliance ? new Date(reliance.timestamp).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : 'N/A'}`, c: 'text-brand-green bg-brand-green/10 border-brand-green/20' },
             ].map(t => (
               <span key={t.l} className={clsx('text-[10px] font-mono font-semibold px-2 py-0.5 rounded border', t.c)}>{t.l}</span>
             ))}
@@ -330,7 +280,7 @@ export default function Dashboard() {
               Open Positions
             </div>
             <span className="text-xs bg-brand-green/10 text-brand-green px-2 py-0.5 rounded-full border border-brand-green/20">
-              {positions?.length ?? 3} Active
+              {positions?.length ?? 0} Active
             </span>
           </div>
           <table className="w-full text-[11px]">
@@ -342,11 +292,7 @@ export default function Dashboard() {
               </tr>
             </thead>
             <tbody>
-              {(positions?.length ? positions : [
-                { symbol:'RELIANCE', quantity:5, avg_price:2810, current_price:2847, pnl:185,  is_paper:true },
-                { symbol:'TCS',      quantity:2, avg_price:3390, current_price:3421, pnl:62,   is_paper:true },
-                { symbol:'HDFCBANK', quantity:8, avg_price:1690, current_price:1672, pnl:-144, is_paper:true },
-              ]).map((p: any, i: number) => (
+              {(positions?.length ? positions : []).map((p: any, i: number) => (
                 <tr key={i} className="hover:bg-brand-blue/3 transition-colors">
                   <td className="px-4 py-3 font-mono font-bold">{p.symbol}</td>
                   <td className="px-4 py-3 font-mono">{p.quantity}</td>
@@ -360,6 +306,7 @@ export default function Dashboard() {
                   </td>
                 </tr>
               ))}
+              {!positions?.length && <tr><td colSpan={6} className="px-4 py-8 text-center text-xs text-text-muted">No open positions.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -380,7 +327,7 @@ export default function Dashboard() {
             </div>
           </div>
           <div className="p-4">
-            <PortfolioSparkline />
+            <PortfolioSparkline points={pnlChart?.data ?? []} portfolioValue={portVal} pnl={pnl} />
           </div>
         </div>
 
@@ -392,15 +339,15 @@ export default function Dashboard() {
 }
 
 // ── Portfolio sparkline (CSS-drawn gradient chart) ────────────────────────────
-function PortfolioSparkline() {
-  const pts = [121370,121800,122100,121900,122400,122900,123100,122800,123400,123900,124100,123800,124350];
+function PortfolioSparkline({ points, portfolioValue, pnl }: { points: any[]; portfolioValue: number; pnl: number }) {
+  const pts = points.length ? points.map(point => point.value) : [0];
   const min = Math.min(...pts); const max = Math.max(...pts);
   const h = 160; const w = 100;
   const poly = pts.map((v,i) => `${(i/(pts.length-1))*w},${h - ((v-min)/(max-min))*h}`).join(' ');
   return (
     <div>
-      <div className="text-2xl font-black font-mono text-brand-green mb-1">₹1,24,350</div>
-      <div className="text-xs text-brand-green mb-3">▲ +₹2,980 today (+2.45%)</div>
+      <div className="text-2xl font-black font-mono text-brand-green mb-1">₹{portfolioValue.toLocaleString('en-IN')}</div>
+      <div className={clsx('text-xs mb-3', pnl >= 0 ? 'text-brand-green' : 'text-brand-red')}>{pnl >= 0 ? '+' : '-'}₹{Math.abs(pnl).toLocaleString('en-IN')} today</div>
       <svg viewBox={`0 0 100 ${h}`} className="w-full" style={{height:160}} preserveAspectRatio="none">
         <defs>
           <linearGradient id="pg" x1="0" y1="0" x2="0" y2="1">
