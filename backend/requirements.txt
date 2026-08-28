@@ -23,5 +23,5 @@ pandas==2.2.2
 numpy==1.26.4
 
 # Broker SDKs — uncomment when you are ready to go live
-# smartapi-python==1.3.4
+smartapi-python==1.3.4
 # kiteconnect==5.0.1
