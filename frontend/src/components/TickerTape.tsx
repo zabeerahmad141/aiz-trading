@@ -24,7 +24,7 @@ export default function TickerTape() {
     retry: 0,
   });
 
-  const items: any[] = (quotes || []) as any[];
+  const items: any[] = ((quotes || []) as any[]).filter((quote) => Number(quote.ltp || 0) > 0);
   const doubled = [...items, ...items];
 
   return (

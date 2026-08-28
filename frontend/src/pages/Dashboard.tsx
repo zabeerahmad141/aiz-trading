@@ -1,8 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   getPortfolioSummary, getBotStatus, getOpenPositions,
-  getTradeHistory, getOHLCV, getQuotes, getPnLChart,
+  getTradeHistory, getOHLCV, getQuotes, getPnLChart, getPortfolioSessions, placeOrder,
 } from '@/lib/api';
 import { Wallet, TrendingUp, Target, Bot, Shield, Brain, Zap, RefreshCw } from 'lucide-react';
 import clsx from 'clsx';
@@ -10,11 +10,11 @@ import clsx from 'clsx';
 import { createChart, ColorType, CrosshairMode } from 'lightweight-charts';
 
 // ── Candlestick chart component — fetches real data from backend ────────────
-function CandleChart({ symbol = 'RELIANCE' }: { symbol?: string }) {
+function CandleChart({ symbol = 'RELIANCE', interval }: { symbol?: string; interval: string }) {
   const ref = useRef<HTMLDivElement>(null);
   const { data: ohlcvData } = useQuery({
-    queryKey: ['ohlcv', symbol],
-    queryFn: () => getOHLCV(symbol, '1d', '5m').then(r => r.data),
+    queryKey: ['ohlcv', symbol, interval],
+    queryFn: () => getOHLCV(symbol, '1d', interval).then(r => r.data),
     refetchInterval: 60000,
     retry: 1,
   });
@@ -54,7 +54,7 @@ function CandleChart({ symbol = 'RELIANCE' }: { symbol?: string }) {
     return () => { chart.remove(); ro.disconnect(); };
   }, [ohlcvData]);
 
-  return <div ref={ref} className={!ohlcvData?.candles?.length ? 'h-[300px] flex items-center justify-center text-xs text-text-muted' : undefined}>{!ohlcvData?.candles?.length && 'No market data available while the market is closed.'}</div>;
+  return <div ref={ref} className={!ohlcvData?.candles?.length ? 'h-[300px] flex items-center justify-center text-xs text-text-muted' : undefined}>{!ohlcvData?.candles?.length && <span className="animate-pulse">Market chart is resting until fresh candles arrive.</span>}</div>;
 }
 
 // ── AI Predictions panel ─────────────────────────────────────────────────────
@@ -83,10 +83,10 @@ function AIPredictions({ marketOpen }: { marketOpen: boolean }) {
 // ── Model metrics ────────────────────────────────────────────────────────────
 function ModelMetrics() {
   const rows = [
-    { label: 'Accuracy', value: 'Unavailable', color: 'text-text-muted' },
-    { label: 'Sharpe Ratio', value: 'Unavailable', color: 'text-text-muted' },
-    { label: 'Max Drawdown', value: 'Unavailable', color: 'text-text-muted' },
-    { label: 'Training data', value: 'Not published', color: 'text-text-muted' },
+    { label: 'Accuracy', value: 'Waiting for metrics', color: 'text-text-muted' },
+    { label: 'Sharpe Ratio', value: 'Waiting for metrics', color: 'text-text-muted' },
+    { label: 'Max Drawdown', value: 'Waiting for metrics', color: 'text-text-muted' },
+    { label: 'Training data', value: 'Awaiting report', color: 'text-text-muted' },
     { label: 'Model', value: 'XGBoost', color: 'text-text-secondary text-[11px]' },
   ];
   return (
@@ -168,12 +168,15 @@ function StatCard({ label, value, sub, color, icon: Icon }: any) {
 
 // ── Main Dashboard ────────────────────────────────────────────────────────────
 export default function Dashboard() {
+  const [interval, setInterval] = useState('5m');
+  const [pnlPeriod, setPnlPeriod] = useState('today');
   const { data: portfolio } = useQuery({ queryKey: ['portfolio'], queryFn: () => getPortfolioSummary().then(r => r.data), refetchInterval: 10000 });
   const { data: botStatus } = useQuery({ queryKey: ['botStatus'], queryFn: () => getBotStatus().then(r => r.data), refetchInterval: 5000 });
   const { data: positions } = useQuery({ queryKey: ['positions'], queryFn: () => getOpenPositions().then(r => r.data), refetchInterval: 5000 });
   const { data: trades } = useQuery({ queryKey: ['trades'], queryFn: () => getTradeHistory().then(r => r.data) });
   const { data: quotes = [] } = useQuery({ queryKey: ['quotes'], queryFn: () => getQuotes().then(r => r.data), refetchInterval: 30000 });
-  const { data: pnlChart } = useQuery({ queryKey: ['pnl-chart', 'today'], queryFn: () => getPnLChart('today').then(r => r.data), refetchInterval: 30000 });
+  const { data: pnlChart } = useQuery({ queryKey: ['pnl-chart', pnlPeriod], queryFn: () => getPnLChart(pnlPeriod).then(r => r.data), refetchInterval: 30000 });
+  const { data: sessionData } = useQuery({ queryKey: ['portfolio-sessions'], queryFn: () => getPortfolioSessions().then(r => r.data), refetchInterval: 60000 });
 
   const portVal   = portfolio?.portfolio_value ?? 0;
   const pnl       = portfolio?.total_pnl ?? 0;
@@ -181,7 +184,11 @@ export default function Dashboard() {
   const tradesCnt = portfolio?.total_trades ?? 0;
   const hasActivity = tradesCnt > 0;
   const reliance = quotes.find((quote: any) => quote.symbol === 'RELIANCE');
-  const formatPrice = (value?: number) => value ? `₹${value.toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : 'N/A';
+  const formatPrice = (value?: number) => value ? `₹${value.toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : 'Waiting';
+  const exitPosition = async (position: any) => {
+    if (!botStatus?.market_open) return;
+    await placeOrder({ symbol: position.symbol, action: 'sell', quantity: position.quantity });
+  };
 
   return (
     <div className="space-y-4 animate-[fade-in_0.3s_ease]">
@@ -206,6 +213,19 @@ export default function Dashboard() {
         <span className="ml-auto text-text-muted">{botStatus?.market_open ? 'Live session' : 'Market closed'}</span>
       </div>
 
+      <div className="glass-card px-4 py-3 border-brand-gold/20">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2 text-sm font-semibold"><span className="text-brand-gold">◷</span> Recent sessions</div>
+          <span className="text-[10px] text-text-muted">Stored trading history</span>
+        </div>
+        {sessionData?.sessions?.length ? <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+          {sessionData.sessions.slice(0, 3).map((session: any) => <div key={session.date} className="rounded-lg border border-white/10 bg-white/[0.02] px-3 py-2">
+            <div className="flex justify-between text-[11px] font-semibold"><span>{session.date}</span><span className={session.pnl >= 0 ? 'text-brand-green' : 'text-brand-red'}>{session.pnl >= 0 ? '+' : ''}₹{Math.abs(session.pnl).toLocaleString('en-IN')}</span></div>
+            <div className="text-[10px] text-text-muted mt-1">{session.trades} trades · {session.win_rate}% win rate</div>
+          </div>)}
+        </div> : <div className="text-xs text-text-muted animate-pulse">Session history will appear here after the first completed trade.</div>}
+      </div>
+
       {/* Stats row */}
       <div className="grid grid-cols-5 gap-3">
         <StatCard label="Portfolio Value" icon={Wallet} color="green"
@@ -219,7 +239,7 @@ export default function Dashboard() {
         <StatCard label="AI Trades Today" icon={Bot} color="blue"
           value={tradesCnt} sub="Recorded trades" />
         <StatCard label="Sharpe Ratio" icon={Shield} color="gold"
-          value="N/A" sub="No published metrics" />
+          value="Waiting" sub="No published metrics" />
       </div>
 
       {/* Main 2-column grid */}
@@ -232,9 +252,9 @@ export default function Dashboard() {
               RELIANCE · NSE
             </div>
             <div className="flex gap-1">
-              {['1m','5m','15m','1H','1D'].map((t,i) => (
-                <button key={t} className={clsx('px-2.5 py-1 rounded text-[11px] font-semibold',
-                  i === 0 ? 'bg-brand-blue/15 text-brand-blue border border-brand-blue/25' : 'text-text-muted hover:text-text-primary'
+              {['1m','5m','15m','1H','1D'].map((t) => (
+                <button key={t} onClick={() => setInterval(t === '1H' ? '1h' : t === '1D' ? '1d' : t)} className={clsx('px-2.5 py-1 rounded text-[11px] font-semibold',
+                  interval === (t === '1H' ? '1h' : t === '1D' ? '1d' : t) ? 'bg-brand-blue/15 text-brand-blue border border-brand-blue/25' : 'text-text-muted hover:text-text-primary'
                 )}>{t}</button>
               ))}
             </div>
@@ -246,8 +266,8 @@ export default function Dashboard() {
               { l: 'High', v: formatPrice(reliance?.high), c: 'text-brand-green' },
               { l: 'Low',  v: formatPrice(reliance?.low), c: 'text-brand-red' },
               { l: 'LTP',  v: formatPrice(reliance?.ltp), c: 'text-brand-blue' },
-              { l: 'Volume', v: reliance?.volume ? reliance.volume.toLocaleString('en-IN') : 'N/A' },
-              { l: 'Change', v: reliance ? `${reliance.change_pct >= 0 ? '+' : ''}${reliance.change_pct}%` : 'N/A', c: reliance?.change_pct >= 0 ? 'text-brand-green' : 'text-brand-red' },
+              { l: 'Volume', v: reliance?.volume ? reliance.volume.toLocaleString('en-IN') : 'Waiting' },
+              { l: 'Change', v: reliance ? `${reliance.change_pct >= 0 ? '+' : ''}${reliance.change_pct}%` : 'Waiting', c: reliance?.change_pct >= 0 ? 'text-brand-green' : 'text-brand-red' },
             ].map(s => (
               <div key={s.l}>
                 <div className="text-[9px] uppercase tracking-wider text-text-muted">{s.l}</div>
@@ -258,14 +278,14 @@ export default function Dashboard() {
           {/* Indicator tags */}
           <div className="flex gap-2 px-4 py-2 flex-wrap border-b border-[var(--border)]">
             {[
-              { l: `Change: ${reliance ? `${reliance.change_pct}%` : 'N/A'}`, c: 'text-brand-blue bg-brand-blue/10 border-brand-blue/20' },
+              { l: `Change: ${reliance ? `${reliance.change_pct}%` : 'Waiting'}`, c: 'text-brand-blue bg-brand-blue/10 border-brand-blue/20' },
               { l: `Close: ${formatPrice(reliance?.close)}`, c: 'text-brand-gold bg-brand-gold/10 border-brand-gold/20' },
-              { l: `Updated: ${reliance ? new Date(reliance.timestamp).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : 'N/A'}`, c: 'text-brand-green bg-brand-green/10 border-brand-green/20' },
+              { l: `Updated: ${reliance ? new Date(reliance.timestamp).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : 'Waiting'}`, c: 'text-brand-green bg-brand-green/10 border-brand-green/20' },
             ].map(t => (
               <span key={t.l} className={clsx('text-[10px] font-mono font-semibold px-2 py-0.5 rounded border', t.c)}>{t.l}</span>
             ))}
           </div>
-          <div className="p-2"><CandleChart /></div>
+          <div className="p-2"><CandleChart interval={interval} /></div>
         </div>
 
         {/* Right column */}
@@ -307,7 +327,7 @@ export default function Dashboard() {
                     {p.pnl >= 0 ? '+' : ''}₹{Math.abs(p.pnl)}
                   </td>
                   <td className="px-4 py-3">
-                    <button className="text-[9px] px-2 py-0.5 rounded border border-brand-red/30 text-brand-red bg-brand-red/10 font-bold hover:bg-brand-red/20">Exit</button>
+                    <button disabled={!botStatus?.market_open} onClick={() => exitPosition(p)} title={botStatus?.market_open ? 'Close position' : 'Market closed'} className="text-[9px] px-2 py-0.5 rounded border border-brand-red/30 text-brand-red bg-brand-red/10 font-bold hover:bg-brand-red/20 disabled:opacity-40">Exit</button>
                   </td>
                 </tr>
               ))}
@@ -324,11 +344,12 @@ export default function Dashboard() {
               Portfolio Today
             </div>
             <div className="flex gap-1">
-              {['Today','1W','1M'].map((t,i) => (
-                <button key={t} className={clsx('px-2 py-0.5 rounded text-[10px] font-semibold',
-                  i === 0 ? 'bg-brand-blue/15 text-brand-blue border border-brand-blue/25' : 'text-text-muted'
+              {['Today','1W','1M'].map((t) => {
+                const period = t === 'Today' ? 'today' : t === '1W' ? 'week' : 'month';
+                return <button key={t} onClick={() => setPnlPeriod(period)} className={clsx('px-2 py-0.5 rounded text-[10px] font-semibold',
+                  pnlPeriod === period ? 'bg-brand-blue/15 text-brand-blue border border-brand-blue/25' : 'text-text-muted'
                 )}>{t}</button>
-              ))}
+              })}
             </div>
           </div>
           <div className="p-4">
