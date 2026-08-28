@@ -5,10 +5,10 @@ Default mode. Switch to live by changing ACTIVE_BROKER in .env
 import uuid
 from datetime import datetime, time as dtime
 from typing import Literal
-import yfinance as yf
 from loguru import logger
 
 from app.services.broker.base import BrokerBase, OrderResult, Quote
+from app.services.market_data import get_active_market_data
 from app.config import settings
 
 
@@ -29,29 +29,20 @@ class PaperBroker(BrokerBase):
         return True
 
     async def get_quote(self, symbol: str) -> Quote:
-        # Append .NS for NSE symbols
-        ticker = yf.Ticker(f"{symbol}.NS")
-        info = ticker.fast_info
-        hist = ticker.history(period="1d", interval="1m")
-
-        ltp = float(info.last_price) if hasattr(info, 'last_price') else 0.0
-        open_p = float(hist['Open'].iloc[0]) if not hist.empty else ltp
-        high = float(hist['High'].max()) if not hist.empty else ltp
-        low = float(hist['Low'].min()) if not hist.empty else ltp
-        close = float(hist['Close'].iloc[-1]) if not hist.empty else ltp
-        volume = int(hist['Volume'].sum()) if not hist.empty else 0
-        prev_close = float(info.previous_close) if hasattr(info, 'previous_close') and info.previous_close else ltp
-        change_pct = ((ltp - prev_close) / prev_close * 100) if prev_close else 0.0
-
+        """Get quote from market data service (Angel One or Yahoo Finance)."""
+        market_data = await get_active_market_data()
+        quote = await market_data.get_quote(symbol)
+        
+        # Convert to broker Quote format (if different)
         return Quote(
-            symbol=symbol,
-            ltp=round(ltp, 2),
-            open=round(open_p, 2),
-            high=round(high, 2),
-            low=round(low, 2),
-            close=round(close, 2),
-            volume=volume,
-            change_pct=round(change_pct, 2),
+            symbol=quote.symbol,
+            ltp=quote.ltp,
+            open=quote.open,
+            high=quote.high,
+            low=quote.low,
+            close=quote.close,
+            volume=quote.volume,
+            change_pct=quote.change_pct,
         )
 
     async def place_order(

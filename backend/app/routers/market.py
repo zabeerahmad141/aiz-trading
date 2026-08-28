@@ -1,43 +1,36 @@
 from fastapi import APIRouter, Depends
-from app.services.broker import get_active_broker
+from app.services.market_data import get_active_market_data
 from app.core.security import get_current_user
 from app.models.user import User
 from app.config import settings
-import yfinance as yf
-import pandas as pd
 
 router = APIRouter()
-
-# Expanded Nifty 500 candidates for screener
-NIFTY500_POOL = [
-    "RELIANCE","TCS","HDFCBANK","INFY","WIPRO","ICICIBANK","BAJFINANCE",
-    "SBIN","ITC","KOTAKBANK","HCLTECH","AXISBANK","LT","MARUTI","SUNPHARMA",
-    "TITAN","BAJAJFINSV","TECHM","ASIANPAINT","ULTRACEMCO","POWERGRID",
-    "NTPC","ONGC","COALINDIA","HINDALCO","TATAMOTORS","TATASTEEL","JSWSTEEL",
-    "INDUSINDBK","ADANIPORTS","NESTLEIND","DRREDDY","DIVISLAB","CIPLA",
-    "EICHERMOT","HEROMOTOCO","APOLLOHOSP","BRITANNIA","GRASIM","BPCL",
-]
 
 
 @router.get("/quotes")
 async def get_quotes(current_user: User = Depends(get_current_user)):
-    broker = await get_active_broker()
+    """Get quotes for all symbols in watchlist."""
+    market_data = await get_active_market_data()
     quotes = []
-    for symbol in settings.watchlist_symbols:
+    
+    for symbol in getattr(settings, 'watchlist_symbols', []):
         try:
-            q = await broker.get_quote(symbol)
+            quote = await market_data.get_quote(symbol)
             quotes.append({
-                "symbol": q.symbol,
-                "ltp": q.ltp,
-                "open": q.open,
-                "high": q.high,
-                "low": q.low,
-                "close": q.close,
-                "volume": q.volume,
-                "change_pct": q.change_pct,
+                "symbol": quote.symbol,
+                "ltp": quote.ltp,
+                "open": quote.open,
+                "high": quote.high,
+                "low": quote.low,
+                "close": quote.close,
+                "volume": quote.volume,
+                "change_pct": quote.change_pct,
+                "timestamp": quote.timestamp.isoformat(),
             })
-        except Exception:
+        except Exception as e:
+            # Log error but continue with other symbols
             pass
+    
     return quotes
 
 
@@ -48,20 +41,27 @@ async def get_ohlcv(
     interval: str = "5m",
     current_user: User = Depends(get_current_user),
 ):
-    """Historical OHLCV data for candlestick chart — real data from Yahoo Finance."""
-    ticker = yf.Ticker(f"{symbol}.NS")
-    hist = ticker.history(period=period, interval=interval)
+    """Historical OHLCV data for candlestick chart."""
+    market_data = await get_active_market_data()
+    ohlcv_list = await market_data.get_ohlcv(symbol, period=period, interval=interval)
+    
     candles = []
-    for ts, row in hist.iterrows():
+    for candle in ohlcv_list:
         candles.append({
-            "time": int(ts.timestamp()),
-            "open":   round(float(row["Open"]),   2),
-            "high":   round(float(row["High"]),   2),
-            "low":    round(float(row["Low"]),    2),
-            "close":  round(float(row["Close"]),  2),
-            "volume": int(row["Volume"]),
+            "time": int(candle.timestamp.timestamp()),
+            "open": round(candle.open, 2),
+            "high": round(candle.high, 2),
+            "low": round(candle.low, 2),
+            "close": round(candle.close, 2),
+            "volume": candle.volume,
         })
-    return {"symbol": symbol, "interval": interval, "candles": candles}
+    
+    return {
+        "symbol": symbol,
+        "interval": interval,
+        "period": period,
+        "candles": candles,
+    }
 
 
 @router.get("/screener")
