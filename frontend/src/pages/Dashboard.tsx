@@ -58,7 +58,7 @@ function CandleChart({ symbol = 'RELIANCE' }: { symbol?: string }) {
 }
 
 // ── AI Predictions panel ─────────────────────────────────────────────────────
-function AIPredictions() {
+function AIPredictions({ marketOpen }: { marketOpen: boolean }) {
   return (
     <div className="glass-card">
       <div className="px-4 py-3 border-b border-[var(--border)] flex items-center justify-between">
@@ -69,7 +69,12 @@ function AIPredictions() {
         <span className="text-[10px] text-text-muted">Next 30 min</span>
       </div>
       <div className="px-4 py-6 text-center text-xs text-text-muted">
-        No live AI predictions are available. Predictions will appear when the ML engine publishes a signal.
+        <div className="relative mx-auto mb-3 w-14 h-14 rounded-full border border-brand-blue/30 flex items-center justify-center">
+          <span className="absolute inset-0 rounded-full border border-brand-blue/20 animate-ping" />
+          <Brain size={18} className="text-brand-blue" />
+        </div>
+        <div className="text-text-secondary">{marketOpen ? 'Waiting for the next model signal.' : 'The model is resting between sessions.'}</div>
+        <div className="mt-1 text-[10px]">Live predictions will appear automatically when signals are published.</div>
       </div>
     </div>
   );
@@ -265,7 +270,7 @@ export default function Dashboard() {
 
         {/* Right column */}
         <div className="flex flex-col gap-4">
-          <AIPredictions />
+          <AIPredictions marketOpen={Boolean(botStatus?.market_open)} />
           <ModelMetrics />
         </div>
       </div>
@@ -341,14 +346,14 @@ export default function Dashboard() {
 // ── Portfolio sparkline (CSS-drawn gradient chart) ────────────────────────────
 function PortfolioSparkline({ points, portfolioValue, pnl }: { points: any[]; portfolioValue: number; pnl: number }) {
   const pts = points.length ? points.map(point => point.value) : [0];
-  const min = Math.min(...pts); const max = Math.max(...pts);
+  const min = Math.min(...pts); const max = Math.max(...pts); const range = max - min || 1;
   const h = 160; const w = 100;
-  const poly = pts.map((v,i) => `${(i/(pts.length-1))*w},${h - ((v-min)/(max-min))*h}`).join(' ');
+  const poly = pts.map((v,i) => `${pts.length === 1 ? w / 2 : (i/(pts.length-1))*w},${h - ((v-min)/range)*h}`).join(' ');
   return (
     <div>
       <div className="text-2xl font-black font-mono text-brand-green mb-1">₹{portfolioValue.toLocaleString('en-IN')}</div>
       <div className={clsx('text-xs mb-3', pnl >= 0 ? 'text-brand-green' : 'text-brand-red')}>{pnl >= 0 ? '+' : '-'}₹{Math.abs(pnl).toLocaleString('en-IN')} today</div>
-      <svg viewBox={`0 0 100 ${h}`} className="w-full" style={{height:160}} preserveAspectRatio="none">
+      {points.length ? <svg viewBox={`0 0 100 ${h}`} className="w-full" style={{height:160}} preserveAspectRatio="none">
         <defs>
           <linearGradient id="pg" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor="#00d4ff" stopOpacity="0.3"/>
@@ -357,7 +362,7 @@ function PortfolioSparkline({ points, portfolioValue, pnl }: { points: any[]; po
         </defs>
         <polygon points={`0,${h} ${poly} ${w},${h}`} fill="url(#pg)"/>
         <polyline points={poly} fill="none" stroke="#00d4ff" strokeWidth="1.5"/>
-      </svg>
+      </svg> : <div className="h-[160px] flex items-center justify-center text-xs text-text-muted animate-pulse">Portfolio history will animate here after the first recorded trade.</div>}
       <div className="flex justify-between text-[9px] text-text-muted mt-1">
         <span>9:15</span><span>11:00</span><span>13:00</span><span>15:30</span>
       </div>
