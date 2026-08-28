@@ -9,17 +9,9 @@ import AIEngine from '@/pages/AIEngine';
 import Settings from '@/pages/Settings';
 import Users from '@/pages/Users';
 import Screener from '@/pages/Screener';
-
-const Stub = ({ title, icon }: { title: string; icon: string }) => (
-  <div className="glass-card p-10 text-center text-text-secondary">
-    <div className="text-5xl mb-4">{icon}</div>
-    <h2 className="text-xl font-bold mb-2">{title}</h2>
-    <p className="text-sm text-text-muted">Coming soon — build it using Dashboard.tsx as a template.</p>
-  </div>
-);
-const MLModels = () => <Stub title="ML Models" icon="🧠" />;
-const Reports  = () => <Stub title="Reports" icon="📊" />;
-const Alerts   = () => <Stub title="Alerts" icon="🔔" />;
+import MLModels from '@/pages/MLModels';
+import Reports from '@/pages/Reports';
+import Alerts from '@/pages/Alerts';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const token = useAuthStore((s) => s.token);
