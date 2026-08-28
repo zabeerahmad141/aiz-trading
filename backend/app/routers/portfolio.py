@@ -75,3 +75,42 @@ async def pnl_chart(
         points.append({"time": t.entered_at.isoformat(), "value": round(cumulative, 2)})
 
     return {"period": period, "data": points}
+
+
+@router.get("/sessions")
+async def portfolio_sessions(
+    limit: int = 10,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Return recent completed trading sessions for off-hours review."""
+    limit = max(1, min(limit, 30))
+    result = await db.execute(
+        select(Trade)
+        .where(
+            Trade.user_id == current_user.id,
+            Trade.status == TradeStatus.executed,
+        )
+        .order_by(desc(Trade.entered_at))
+        .limit(200),
+    )
+    grouped: dict[str, dict] = {}
+    for trade in result.scalars():
+        session_date = trade.entered_at.date().isoformat()
+        session = grouped.setdefault(
+            session_date,
+            {"date": session_date, "trades": 0, "wins": 0, "losses": 0, "pnl": 0.0},
+        )
+        session["trades"] += 1
+        pnl = float(trade.pnl or 0)
+        session["pnl"] += pnl
+        if pnl > 0:
+            session["wins"] += 1
+        elif pnl < 0:
+            session["losses"] += 1
+
+    sessions = list(grouped.values())[:limit]
+    for session in sessions:
+        session["pnl"] = round(session["pnl"], 2)
+        session["win_rate"] = round(session["wins"] / session["trades"] * 100, 1)
+    return {"sessions": sessions}

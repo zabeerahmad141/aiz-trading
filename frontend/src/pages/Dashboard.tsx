@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import {
   getPortfolioSummary, getBotStatus, getOpenPositions,
-  getTradeHistory, getOHLCV, getQuotes, getPnLChart, placeOrder,
+  getTradeHistory, getOHLCV, getQuotes, getPnLChart, getPortfolioSessions, placeOrder,
 } from '@/lib/api';
 import { Wallet, TrendingUp, Target, Bot, Shield, Brain, Zap, RefreshCw } from 'lucide-react';
 import clsx from 'clsx';
@@ -176,6 +176,7 @@ export default function Dashboard() {
   const { data: trades } = useQuery({ queryKey: ['trades'], queryFn: () => getTradeHistory().then(r => r.data) });
   const { data: quotes = [] } = useQuery({ queryKey: ['quotes'], queryFn: () => getQuotes().then(r => r.data), refetchInterval: 30000 });
   const { data: pnlChart } = useQuery({ queryKey: ['pnl-chart', pnlPeriod], queryFn: () => getPnLChart(pnlPeriod).then(r => r.data), refetchInterval: 30000 });
+  const { data: sessionData } = useQuery({ queryKey: ['portfolio-sessions'], queryFn: () => getPortfolioSessions().then(r => r.data), refetchInterval: 60000 });
 
   const portVal   = portfolio?.portfolio_value ?? 0;
   const pnl       = portfolio?.total_pnl ?? 0;
@@ -210,6 +211,19 @@ export default function Dashboard() {
         <span className="text-brand-blue text-base">●</span>
         <span>{hasActivity ? `${tradesCnt} recorded trades in the current portfolio.` : 'No trades recorded for the current portfolio.'}</span>
         <span className="ml-auto text-text-muted">{botStatus?.market_open ? 'Live session' : 'Market closed'}</span>
+      </div>
+
+      <div className="glass-card px-4 py-3 border-brand-gold/20">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2 text-sm font-semibold"><span className="text-brand-gold">◷</span> Recent sessions</div>
+          <span className="text-[10px] text-text-muted">Stored trading history</span>
+        </div>
+        {sessionData?.sessions?.length ? <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+          {sessionData.sessions.slice(0, 3).map((session: any) => <div key={session.date} className="rounded-lg border border-white/10 bg-white/[0.02] px-3 py-2">
+            <div className="flex justify-between text-[11px] font-semibold"><span>{session.date}</span><span className={session.pnl >= 0 ? 'text-brand-green' : 'text-brand-red'}>{session.pnl >= 0 ? '+' : ''}₹{Math.abs(session.pnl).toLocaleString('en-IN')}</span></div>
+            <div className="text-[10px] text-text-muted mt-1">{session.trades} trades · {session.win_rate}% win rate</div>
+          </div>)}
+        </div> : <div className="text-xs text-text-muted animate-pulse">Session history will appear here after the first completed trade.</div>}
       </div>
 
       {/* Stats row */}

@@ -40,6 +40,7 @@ export const placeOrder = (data: object) => api.post('/trading/order', data);
 // Portfolio
 export const getPortfolioSummary = () => api.get('/portfolio/summary');
 export const getPnLChart = (period = 'today') => api.get(`/portfolio/pnl-chart?period=${period}`);
+export const getPortfolioSessions = (limit = 10) => api.get(`/portfolio/sessions?limit=${limit}`);
 
 // Market
 export const getQuotes = () => api.get('/market/quotes');
