@@ -41,6 +41,8 @@ from app.services.broker import (
 )
 
 from app.config import settings
+from app.services.market_data import get_active_market_data
+from app.services.risk.exit_manager import ExitManager
 
 
 router = APIRouter()
@@ -314,11 +316,12 @@ async def bot_status(
     ),
 ):
     broker = await get_active_broker()
+    effective_broker = "paper" if settings.trading_mode.lower() != "live" else settings.active_broker
 
     return {
         "is_running": True,
         "mode": settings.trading_mode,
-        "broker": settings.active_broker,
+        "broker": effective_broker,
         "market_open": (
             await broker.is_market_open()
         ),
@@ -430,6 +433,12 @@ async def place_manual_order(
         action=payload.action.value,
         quantity=quantity,
     )
+
+    if result.price <= 0:
+        raise HTTPException(
+            status_code=503,
+            detail="Broker returned an invalid execution price",
+        )
 
     # ---------------------------------------------------------
     # BUY
@@ -734,6 +743,12 @@ async def place_ai_order(
         quantity=quantity,
     )
 
+    if result.price <= 0:
+        raise HTTPException(
+            status_code=503,
+            detail="Broker returned an invalid execution price",
+        )
+
     # =========================================================
     # BUY
     # =========================================================
@@ -874,6 +889,8 @@ async def place_ai_order(
 # AI signals - display only
 # =============================================================
 
+_latest_ai_signals: list[dict] = []
+
 
 @router.post("/ai-signals")
 async def receive_ai_signals(
@@ -907,6 +924,9 @@ async def receive_ai_signals(
 
     if signals:
 
+        global _latest_ai_signals
+        _latest_ai_signals = signals
+
         await broadcast_trade_event(
             "ai_signals",
             {
@@ -917,6 +937,14 @@ async def receive_ai_signals(
     return {
         "received": len(signals)
     }
+
+
+@router.get("/ai-signals")
+async def get_ai_signals(
+    current_user: User = Depends(get_current_user),
+):
+    """Return the latest signals received from the ML engine."""
+    return {"signals": _latest_ai_signals}
 
 
 # =============================================================
@@ -1008,6 +1036,20 @@ async def open_positions(
         result.scalars().all()
     )
 
+    market_data = await get_active_market_data()
+    changed = False
+    for position in positions:
+        try:
+            quote = await market_data.get_quote(position.symbol)
+            if quote.ltp > 0:
+                position.current_price = quote.ltp
+                changed = True
+        except Exception:
+            continue
+
+    if changed:
+        await db.commit()
+
     return [
         {
             "id": p.id,
@@ -1036,3 +1078,44 @@ async def open_positions(
         }
         for p in positions
     ]
+
+
+@router.get("/exit-checks")
+async def exit_checks(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Evaluate configured exits without placing orders."""
+    result = await db.execute(select(Position).where(Position.user_id == current_user.id))
+    positions = result.scalars().all()
+    market_data = await get_active_market_data()
+    manager = ExitManager()
+    checks = []
+
+    for position in positions:
+        try:
+            quote = await market_data.get_quote(position.symbol)
+            if quote.ltp <= 0:
+                continue
+            stop_loss = position.stop_loss or position.avg_price * (1 - settings.stop_loss_pct / 100)
+            target = position.target_price or position.avg_price * (1 + settings.target_pct / 100)
+            decision = manager.evaluate(
+                side="BUY",
+                entry_price=position.avg_price,
+                current_price=quote.ltp,
+                stop_loss=stop_loss,
+                target=target,
+            )
+            checks.append({
+                "symbol": position.symbol,
+                "quantity": position.quantity,
+                "current_price": quote.ltp,
+                "should_exit": decision.should_exit,
+                "reason": decision.reason,
+                "stop_loss": round(stop_loss, 2),
+                "target": round(target, 2),
+            })
+        except Exception:
+            continue
+
+    return {"checks": checks}

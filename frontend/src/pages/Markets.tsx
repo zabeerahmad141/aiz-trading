@@ -1,14 +1,22 @@
 import { useQuery } from '@tanstack/react-query';
-import { getQuotes } from '@/lib/api';
+import { getApiStatus, getQuotes } from '@/lib/api';
 import clsx from 'clsx';
-import { TrendingUp, TrendingDown } from 'lucide-react';
+import { RefreshCw, TrendingUp, TrendingDown } from 'lucide-react';
 
 export default function Markets() {
-  const { data: quotes = [], isLoading, isError, dataUpdatedAt } = useQuery({
+  const { data: quotes = [], isLoading, isError, isFetching, dataUpdatedAt, refetch } = useQuery({
     queryKey: ['quotes'],
     queryFn: () => getQuotes().then(r => r.data),
     refetchInterval: 10000,
   });
+  const { data: apiStatus } = useQuery({
+    queryKey: ['api-status'],
+    queryFn: () => getApiStatus().then(r => r.data),
+    refetchInterval: 30000,
+  });
+  const marketOpen = apiStatus?.market_open === true;
+  const feedAvailable = quotes.length > 0;
+  const statusLabel = isError ? 'Unavailable' : feedAvailable ? (marketOpen ? 'Live' : 'Recent') : 'Paused';
 
   return (
     <div className="space-y-4 animate-[fade-in_0.3s_ease]">
@@ -20,9 +28,10 @@ export default function Markets() {
             {dataUpdatedAt > 0 && <span className="ml-2 text-brand-green">· Updated {new Date(dataUpdatedAt).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false })}</span>}
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <div className="w-2 h-2 rounded-full bg-brand-green animate-pulse" />
-          <span className="text-xs text-brand-green font-semibold">Live</span>
+        <div className="flex items-center gap-3">
+          <button onClick={() => refetch()} disabled={isFetching} title="Refresh market data" className="p-2 rounded-lg border border-white/10 text-text-muted hover:text-brand-blue disabled:opacity-40"><RefreshCw size={14} className={isFetching ? 'animate-spin' : ''} /></button>
+          <div className={clsx('w-2 h-2 rounded-full', feedAvailable ? 'bg-brand-green animate-pulse' : 'bg-text-muted')} />
+          <span className={clsx('text-xs font-semibold', feedAvailable ? 'text-brand-green' : 'text-text-muted')}>{statusLabel}</span>
         </div>
       </div>
 
@@ -68,7 +77,7 @@ export default function Markets() {
         )}
         {!isLoading && !isError && quotes.length === 0 && (
           <div className="p-8 text-center text-text-muted text-sm">
-            Market closed — quotes available during NSE hours (9:15 AM – 3:30 PM IST)
+            {isError ? 'Market feed unavailable. Check provider configuration and container logs.' : marketOpen ? 'No quotes received yet. The provider may be warming up.' : 'Market closed — quotes will refresh during NSE hours (9:15 AM – 3:30 PM IST)'}
           </div>
         )}
       </div>

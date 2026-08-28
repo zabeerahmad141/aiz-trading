@@ -2,6 +2,8 @@
 Yahoo Finance market data provider (fallback).
 Used when Angel One unavailable.
 """
+import asyncio
+import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -18,6 +20,9 @@ class YFinanceProvider(MarketDataProvider):
     Note: Yahoo Finance is rate-limited, best used with Redis caching.
     """
 
+    quote_cache: dict[str, tuple[float, Quote]] = {}
+    quote_cache_ttl = 15.0
+
     async def connect(self) -> bool:
         """Verify yfinance is available."""
         try:
@@ -30,6 +35,17 @@ class YFinanceProvider(MarketDataProvider):
 
     async def get_quote(self, symbol: str) -> Quote:
         """Fetch quote from Yahoo Finance."""
+        cached = self.quote_cache.get(symbol)
+        if cached and time.monotonic() - cached[0] < self.quote_cache_ttl:
+            return cached[1]
+
+        quote = await asyncio.to_thread(self._fetch_quote, symbol)
+        if quote.ltp > 0:
+            self.quote_cache[symbol] = (time.monotonic(), quote)
+        return quote
+
+    @staticmethod
+    def _fetch_quote(symbol: str) -> Quote:
         try:
             import yfinance as yf
 
@@ -92,6 +108,14 @@ class YFinanceProvider(MarketDataProvider):
         interval: str = "5m",
     ) -> list[OHLCV]:
         """Fetch OHLCV data from Yahoo Finance."""
+        return await asyncio.to_thread(self._fetch_ohlcv, symbol, period, interval)
+
+    @staticmethod
+    def _fetch_ohlcv(
+        symbol: str,
+        period: str,
+        interval: str,
+    ) -> list[OHLCV]:
         try:
             import yfinance as yf
 

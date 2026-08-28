@@ -199,7 +199,8 @@ async def trading_loop():
             # Generate AI signals
             # -------------------------------------------------
             signals = await generate_signals(
-                WATCHLIST
+                WATCHLIST,
+                model_instance=model,
             )
 
             if not signals:

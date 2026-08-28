@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getScreener } from '@/lib/api';
 import clsx from 'clsx';
-import { Search, TrendingUp, TrendingDown, RefreshCw } from 'lucide-react';
+import { Search, Star, TrendingUp, TrendingDown, RefreshCw } from 'lucide-react';
 
 interface ScreenerStock {
   symbol: string;
@@ -23,6 +23,15 @@ interface ScreenerResponse {
 
 export default function Screener() {
   const [minScore, setMinScore] = useState(50);
+  const [watchlist, setWatchlist] = useState<string[]>(() => {
+    try { return JSON.parse(localStorage.getItem('aiz-watchlist') || '[]'); } catch { return []; }
+  });
+
+  const toggleWatchlist = (symbol: string) => {
+    const next = watchlist.includes(symbol) ? watchlist.filter(item => item !== symbol) : [...watchlist, symbol];
+    setWatchlist(next);
+    localStorage.setItem('aiz-watchlist', JSON.stringify(next));
+  };
 
   const { data, isLoading, isFetching, refetch, dataUpdatedAt } = useQuery<ScreenerResponse>({
     queryKey: ['screener'],
@@ -155,9 +164,9 @@ export default function Screener() {
                   </td>
                   <td className="px-4 py-3 text-text-muted text-[11px]">{s.reason}</td>
                   <td className="px-4 py-3">
-                    <span className="text-[10px] px-2 py-0.5 rounded border border-brand-green/30 text-brand-green bg-brand-green/10 font-bold">
-                      Watch
-                    </span>
+                    <button onClick={() => toggleWatchlist(s.symbol)} title={watchlist.includes(s.symbol) ? 'Remove from watchlist' : 'Add to watchlist'} className={clsx('inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded border font-bold', watchlist.includes(s.symbol) ? 'border-brand-gold/30 text-brand-gold bg-brand-gold/10' : 'border-brand-green/30 text-brand-green bg-brand-green/10')}>
+                      <Star size={11} fill={watchlist.includes(s.symbol) ? 'currentColor' : 'none'} />{watchlist.includes(s.symbol) ? 'Saved' : 'Watch'}
+                    </button>
                   </td>
                 </tr>
               ))}

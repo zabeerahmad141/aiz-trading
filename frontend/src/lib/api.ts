@@ -30,23 +30,28 @@ export const login = (username: string, password: string) =>
   api.post('/auth/login', { username, password });
 
 export const getMe = () => api.get('/auth/me');
+export const refreshAccessToken = (refresh_token: string) => api.post('/auth/refresh', { refresh_token });
 
 // Trading
 export const getBotStatus = () => api.get('/trading/status');
 export const getTradeHistory = (limit = 50) => api.get(`/trading/history?limit=${limit}`);
 export const getOpenPositions = () => api.get('/trading/positions');
+export const getExitChecks = () => api.get('/trading/exit-checks');
 export const placeOrder = (data: object) => api.post('/trading/order', data);
 
 // Portfolio
 export const getPortfolioSummary = () => api.get('/portfolio/summary');
 export const getPnLChart = (period = 'today') => api.get(`/portfolio/pnl-chart?period=${period}`);
 export const getPortfolioSessions = (limit = 10) => api.get(`/portfolio/sessions?limit=${limit}`);
+export const getPortfolioRisk = () => api.get('/portfolio/risk');
+export const runBacktest = (data: object) => api.post('/backtest/run', data);
 
 // Market
 export const getQuotes = () => api.get('/market/quotes');
 export const getOHLCV = (symbol: string, period = '1d', interval = '5m') =>
   api.get(`/market/ohlcv/${symbol}?period=${period}&interval=${interval}`);
 export const getScreener = () => api.get('/market/screener');
+export const getAISignals = () => api.get('/trading/ai-signals');
 // /api/status is at root level in backend (not under /api prefix router)
 // nginx proxies /api/ → backend, so this hits backend:8000/api/status correctly
 export const getApiStatus = () => api.get('/status');

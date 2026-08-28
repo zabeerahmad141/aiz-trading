@@ -1,5 +1,3 @@
-version: "3.9"
-
 # ══════════════════════════════════════════════════════════
 # AI Z — Local Development (Docker Compose)
 # Use this for quick testing on Windows WITHOUT K8s/WSL2.
@@ -46,6 +44,8 @@ services:
       POSTGRES_HOST: postgresql
       REDIS_HOST: redis
       APP_ENV: production
+    volumes:
+      - paper_state:/app/data
     depends_on:
       postgresql: { condition: service_healthy }
       redis:       { condition: service_healthy }
@@ -85,3 +85,4 @@ services:
 volumes:
   pgdata:
   ml_models:
+  paper_state:

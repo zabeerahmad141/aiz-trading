@@ -8,6 +8,7 @@ Setup steps (see docs/MASTER.md Section 21):
 3. Access token must be refreshed daily (handled by this class)
 4. Set ACTIVE_BROKER=zerodha in .env
 """
+import asyncio
 from typing import Literal
 from loguru import logger
 from app.services.broker.base import BrokerBase, OrderResult, Quote
@@ -53,9 +54,27 @@ class ZerodhaBroker(BrokerBase):
             product=self.kite.PRODUCT_MIS,  # Intraday
             variety=self.kite.VARIETY_REGULAR,
         )
-        quote = await self.get_quote(symbol)
+        fill = await self._wait_for_fill(str(order_id))
+        if fill["status"] != "complete":
+            raise ValueError(f"Zerodha order {order_id} was {fill['status']}")
+        execution_price = fill["price"] or price or (await self.get_quote(symbol)).ltp
+        if execution_price <= 0:
+            raise ValueError(f"No valid execution price returned for {symbol}")
         return OrderResult(order_id=str(order_id), symbol=symbol, action=action,
-                           quantity=quantity, price=quote.ltp, status="executed", is_paper=False)
+                           quantity=quantity, price=execution_price, status="executed", is_paper=False)
+
+    async def _wait_for_fill(self, order_id: str) -> dict:
+        for _ in range(10):
+            try:
+                orders = await asyncio.to_thread(self.kite.order_history, order_id)
+                latest = orders[-1] if orders else {}
+                status = str(latest.get("status", "")).lower()
+                if status in {"complete", "rejected", "cancelled"}:
+                    return {"status": status, "price": float(latest.get("average_price") or 0)}
+            except Exception as exc:
+                logger.warning("Zerodha order status lookup failed for {}: {}", order_id, exc)
+            await asyncio.sleep(1)
+        return {"status": "unknown", "price": 0.0}
 
     async def cancel_order(self, order_id: str) -> bool:
         self.kite.cancel_order(variety=self.kite.VARIETY_REGULAR, order_id=order_id)

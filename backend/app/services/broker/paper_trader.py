@@ -3,6 +3,9 @@ Paper Trading Broker — simulates orders without real money.
 Default mode. Switch to live by changing ACTIVE_BROKER in .env
 """
 import uuid
+import json
+import os
+from pathlib import Path
 from datetime import datetime, time as dtime
 from typing import Literal
 from loguru import logger
@@ -23,8 +26,34 @@ class PaperBroker(BrokerBase):
         self.capital = settings.trading_capital
         self.positions: dict[str, dict] = {}
         self.order_history: list[dict] = []
+        self.state_path = Path(os.getenv("PAPER_STATE_PATH", "/app/data/paper_state.json"))
+
+    def _save_state(self):
+        self.state_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary_path = self.state_path.with_suffix(".tmp")
+        temporary_path.write_text(
+            json.dumps({
+                "capital": self.capital,
+                "positions": self.positions,
+                "order_history": self.order_history,
+            }),
+            encoding="utf-8",
+        )
+        temporary_path.replace(self.state_path)
+
+    def _load_state(self):
+        if not self.state_path.exists():
+            return
+        try:
+            state = json.loads(self.state_path.read_text(encoding="utf-8"))
+            self.capital = float(state["capital"])
+            self.positions = dict(state.get("positions", {}))
+            self.order_history = list(state.get("order_history", []))
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            logger.error("Paper broker state could not be loaded: {}", exc)
 
     async def connect(self) -> bool:
+        self._load_state()
         logger.info("Paper trading broker connected. No real money at risk.")
         return True
 
@@ -83,6 +112,7 @@ class PaperBroker(BrokerBase):
             is_paper=True,
         )
         self.order_history.append(result.__dict__)
+        self._save_state()
         return result
 
     async def cancel_order(self, order_id: str) -> bool:

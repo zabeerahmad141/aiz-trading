@@ -1,11 +1,13 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import {
   getPortfolioSummary, getBotStatus, getOpenPositions,
   getTradeHistory, getOHLCV, getQuotes, getPnLChart, getPortfolioSessions, placeOrder,
+  getPortfolioRisk,
 } from '@/lib/api';
-import { Wallet, TrendingUp, Target, Bot, Shield, Brain, Zap, RefreshCw } from 'lucide-react';
+import { Wallet, TrendingUp, Target, Bot, Shield, Brain, Zap, RefreshCw, ShoppingCart } from 'lucide-react';
 import clsx from 'clsx';
+import { useAuthStore } from '@/store/auth';
 // @ts-ignore
 import { createChart, ColorType, CrosshairMode } from 'lightweight-charts';
 
@@ -170,6 +172,11 @@ function StatCard({ label, value, sub, color, icon: Icon }: any) {
 export default function Dashboard() {
   const [interval, setInterval] = useState('5m');
   const [pnlPeriod, setPnlPeriod] = useState('today');
+  const symbols = ['RELIANCE', 'TCS', 'HDFCBANK', 'INFY', 'WIPRO', 'ICICIBANK', 'BAJFINANCE', 'SBIN', 'ITC', 'KOTAKBANK'];
+  const [order, setOrder] = useState({ symbol: symbols[0], quantity: 1, stop_loss: '', target_price: '' });
+  const [chartSymbol, setChartSymbol] = useState('RELIANCE');
+  const { username, role } = useAuthStore();
+  const canTrade = role === 'admin' || role === 'analyst';
   const { data: portfolio } = useQuery({ queryKey: ['portfolio'], queryFn: () => getPortfolioSummary().then(r => r.data), refetchInterval: 10000 });
   const { data: botStatus } = useQuery({ queryKey: ['botStatus'], queryFn: () => getBotStatus().then(r => r.data), refetchInterval: 5000 });
   const { data: positions } = useQuery({ queryKey: ['positions'], queryFn: () => getOpenPositions().then(r => r.data), refetchInterval: 5000 });
@@ -177,32 +184,58 @@ export default function Dashboard() {
   const { data: quotes = [] } = useQuery({ queryKey: ['quotes'], queryFn: () => getQuotes().then(r => r.data), refetchInterval: 30000 });
   const { data: pnlChart } = useQuery({ queryKey: ['pnl-chart', pnlPeriod], queryFn: () => getPnLChart(pnlPeriod).then(r => r.data), refetchInterval: 30000 });
   const { data: sessionData } = useQuery({ queryKey: ['portfolio-sessions'], queryFn: () => getPortfolioSessions().then(r => r.data), refetchInterval: 60000 });
+  const queryClient = useQueryClient();
+  const exitMutation = useMutation({
+    mutationFn: (position: any) => placeOrder({ symbol: position.symbol, action: 'sell', quantity: position.quantity }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['positions'] });
+      queryClient.invalidateQueries({ queryKey: ['portfolio'] });
+      queryClient.invalidateQueries({ queryKey: ['trades'] });
+    },
+  });
+  const orderMutation = useMutation({
+    mutationFn: (action: 'buy' | 'sell') => placeOrder({
+      symbol: order.symbol,
+      quantity: order.quantity,
+      action,
+      stop_loss: order.stop_loss ? Number(order.stop_loss) : undefined,
+      target_price: order.target_price ? Number(order.target_price) : undefined,
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['positions'] });
+      queryClient.invalidateQueries({ queryKey: ['portfolio'] });
+      queryClient.invalidateQueries({ queryKey: ['trades'] });
+    },
+  });
+  const { data: risk } = useQuery({ queryKey: ['portfolio-risk'], queryFn: () => getPortfolioRisk().then(r => r.data), refetchInterval: 10000 });
 
   const portVal   = portfolio?.portfolio_value ?? 0;
   const pnl       = portfolio?.total_pnl ?? 0;
   const winRate   = portfolio?.win_rate ?? 0;
   const tradesCnt = portfolio?.total_trades ?? 0;
   const hasActivity = tradesCnt > 0;
-  const reliance = quotes.find((quote: any) => quote.symbol === 'RELIANCE');
+  const selectedQuote = quotes.find((quote: any) => quote.symbol === chartSymbol);
   const formatPrice = (value?: number) => value ? `₹${value.toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : 'Waiting';
   const exitPosition = async (position: any) => {
     if (!botStatus?.market_open) return;
-    await placeOrder({ symbol: position.symbol, action: 'sell', quantity: position.quantity });
+    if (window.confirm(`Exit ${position.quantity} ${position.symbol} at the current market price?`)) {
+      exitMutation.mutate(position);
+    }
   };
 
   return (
     <div className="space-y-4 animate-[fade-in_0.3s_ease]">
       {/* Header */}
       <div>
-        <h1 className="text-xl font-bold">Dashboard
-          <span className="text-text-muted font-normal text-sm ml-2">— Good morning, Admin</span>
-        </h1>
+        <div className="flex items-center justify-between"><h1 className="text-xl font-bold">Dashboard
+          <span className="text-text-muted font-normal text-sm ml-2">— Good morning, {username || 'Trader'}</span>
+        </h1><button onClick={() => queryClient.invalidateQueries()} title="Refresh dashboard data" className="p-2 rounded-lg border border-white/10 text-text-muted hover:text-brand-blue"><RefreshCw size={15} /></button></div>
         <p className="text-text-muted text-xs mt-0.5">
           NSE · Nifty 50 ·&nbsp;
-          {botStatus?.mode === 'paper' ? '📄 Paper Trading Mode' : '🔴 Live Trading'}
+          {botStatus?.mode === 'paper' ? '📄 Paper Trading Mode' : botStatus?.mode === 'live' ? '🔴 Live Trading' : 'Checking trading mode'}
           {botStatus?.market_open
             ? <span className="text-brand-green ml-1">· Market Open</span>
-            : <span className="text-brand-red ml-1">· Market Closed</span>}
+            : botStatus ? <span className="text-brand-red ml-1">· Market Closed</span> : <span className="text-text-muted ml-1">· Checking market status</span>}
         </p>
       </div>
 
@@ -227,7 +260,7 @@ export default function Dashboard() {
       </div>
 
       {/* Stats row */}
-      <div className="grid grid-cols-5 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
         <StatCard label="Portfolio Value" icon={Wallet} color="green"
           value={`₹${portVal.toLocaleString('en-IN')}`}
           sub={`Capital: ₹${(portfolio?.capital ?? 0).toLocaleString('en-IN')}`} />
@@ -242,14 +275,44 @@ export default function Dashboard() {
           value="Waiting" sub="No published metrics" />
       </div>
 
+      <div className="glass-card px-4 py-3 border-brand-blue/20">
+        <div className="flex items-center justify-between mb-2"><span className="text-sm font-semibold">Risk overview</span><span className="text-[10px] text-text-muted">Transparent exposure</span></div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-[11px]">
+          <div><div className="text-text-muted">Open positions</div><div className="font-mono font-bold mt-1">{risk?.open_positions ?? '—'} / {risk?.max_positions ?? '—'}</div></div>
+          <div><div className="text-text-muted">Gross exposure</div><div className="font-mono font-bold mt-1">{risk ? `₹${risk.gross_exposure.toLocaleString('en-IN')}` : 'Waiting'}</div></div>
+          <div><div className="text-text-muted">Capital at risk</div><div className="font-mono font-bold text-brand-gold mt-1">{risk ? `₹${risk.capital_at_risk.toLocaleString('en-IN')}` : 'Waiting'}</div></div>
+          <div><div className="text-text-muted">Daily loss limit</div><div className="font-mono font-bold mt-1">{risk ? `₹${risk.daily_loss_limit.toLocaleString('en-IN')}` : 'Waiting'}</div></div>
+        </div>
+      </div>
+
+      <div className="glass-card p-4 border-brand-green/20">
+        <div className="flex items-center justify-between gap-3 mb-3">
+          <div><div className="flex items-center gap-2 text-sm font-semibold"><ShoppingCart size={15} className="text-brand-green" /> Paper order ticket</div><div className="text-[10px] text-text-muted mt-1">Choose a stock, define protection, and review before submitting.</div></div>
+          <span className="text-[10px] text-text-muted text-right">Orders require an open NSE session</span>
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <label className="text-[10px] text-text-muted">Symbol<select value={order.symbol} onChange={event => setOrder({ ...order, symbol: event.target.value })} className="mt-1 w-full bg-black/20 border border-white/10 rounded px-2 py-2 text-xs font-mono text-text-primary">{symbols.map(symbol => <option key={symbol} value={symbol}>{symbol} · NSE</option>)}</select></label>
+          <label className="text-[10px] text-text-muted">Quantity<input type="number" min="1" value={order.quantity} onChange={event => setOrder({ ...order, quantity: Math.max(1, Number(event.target.value)) })} className="mt-1 w-full bg-black/20 border border-white/10 rounded px-2 py-2 text-xs font-mono text-text-primary" /></label>
+          <label className="text-[10px] text-text-muted">Stop loss (optional)<input type="number" min="0" value={order.stop_loss} onChange={event => setOrder({ ...order, stop_loss: event.target.value })} className="mt-1 w-full bg-black/20 border border-white/10 rounded px-2 py-2 text-xs font-mono text-text-primary" /></label>
+          <label className="text-[10px] text-text-muted">Target (optional)<input type="number" min="0" value={order.target_price} onChange={event => setOrder({ ...order, target_price: event.target.value })} className="mt-1 w-full bg-black/20 border border-white/10 rounded px-2 py-2 text-xs font-mono text-text-primary" /></label>
+        </div>
+        <div className="flex items-center gap-2 mt-3">
+          <button disabled={!canTrade || !botStatus?.market_open || orderMutation.isPending || !order.symbol.trim()} onClick={() => window.confirm(`Place paper BUY for ${order.quantity} ${order.symbol}?`) && orderMutation.mutate('buy')} className="px-4 py-2 rounded-lg bg-brand-green/15 border border-brand-green/30 text-brand-green text-xs font-bold disabled:opacity-40">BUY</button>
+          <button disabled={!canTrade || !botStatus?.market_open || orderMutation.isPending || !order.symbol.trim()} onClick={() => window.confirm(`Place paper SELL for ${order.quantity} ${order.symbol}?`) && orderMutation.mutate('sell')} className="px-4 py-2 rounded-lg bg-brand-red/15 border border-brand-red/30 text-brand-red text-xs font-bold disabled:opacity-40">SELL</button>
+          {!canTrade ? <span className="text-[10px] text-text-muted">Viewer access: trading controls are disabled.</span> : !botStatus?.market_open && <span className="text-[10px] text-text-muted">Market closed: orders will be enabled at 09:15 IST.</span>}
+          {orderMutation.isError && <span className="text-[10px] text-brand-red">Order failed. Check position, quantity, and market status.</span>}
+          {orderMutation.isSuccess && <span className="text-[10px] text-brand-green">Paper order accepted.</span>}
+        </div>
+      </div>
+
       {/* Main 2-column grid */}
-      <div className="grid grid-cols-[1fr_320px] gap-4">
+      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_320px] gap-4">
         {/* Candlestick chart card */}
         <div className="glass-card overflow-hidden">
           <div className="px-4 py-3 border-b border-[var(--border)] flex items-center justify-between">
             <div className="flex items-center gap-2 text-sm font-semibold">
               <span className="w-6 h-6 rounded bg-brand-blue/10 flex items-center justify-center"><TrendingUp size={12} className="text-brand-blue" /></span>
-              RELIANCE · NSE
+              <select value={chartSymbol} onChange={event => setChartSymbol(event.target.value)} className="bg-transparent text-sm font-semibold text-text-primary outline-none"><option value="RELIANCE">RELIANCE · NSE</option>{symbols.filter(symbol => symbol !== 'RELIANCE').map(symbol => <option key={symbol} value={symbol}>{symbol} · NSE</option>)}</select>
             </div>
             <div className="flex gap-1">
               {['1m','5m','15m','1H','1D'].map((t) => (
@@ -262,12 +325,12 @@ export default function Dashboard() {
           {/* Chart stats bar */}
           <div className="flex gap-6 px-4 py-2.5 border-b border-[var(--border)] flex-wrap">
             {[
-              { l: 'Open', v: formatPrice(reliance?.open) },
-              { l: 'High', v: formatPrice(reliance?.high), c: 'text-brand-green' },
-              { l: 'Low',  v: formatPrice(reliance?.low), c: 'text-brand-red' },
-              { l: 'LTP',  v: formatPrice(reliance?.ltp), c: 'text-brand-blue' },
-              { l: 'Volume', v: reliance?.volume ? reliance.volume.toLocaleString('en-IN') : 'Waiting' },
-              { l: 'Change', v: reliance ? `${reliance.change_pct >= 0 ? '+' : ''}${reliance.change_pct}%` : 'Waiting', c: reliance?.change_pct >= 0 ? 'text-brand-green' : 'text-brand-red' },
+              { l: 'Open', v: formatPrice(selectedQuote?.open) },
+              { l: 'High', v: formatPrice(selectedQuote?.high), c: 'text-brand-green' },
+              { l: 'Low',  v: formatPrice(selectedQuote?.low), c: 'text-brand-red' },
+              { l: 'LTP',  v: formatPrice(selectedQuote?.ltp), c: 'text-brand-blue' },
+              { l: 'Volume', v: selectedQuote?.volume ? selectedQuote.volume.toLocaleString('en-IN') : 'Waiting' },
+              { l: 'Change', v: selectedQuote ? `${selectedQuote.change_pct >= 0 ? '+' : ''}${selectedQuote.change_pct}%` : 'Waiting', c: selectedQuote?.change_pct >= 0 ? 'text-brand-green' : 'text-brand-red' },
             ].map(s => (
               <div key={s.l}>
                 <div className="text-[9px] uppercase tracking-wider text-text-muted">{s.l}</div>
@@ -278,14 +341,14 @@ export default function Dashboard() {
           {/* Indicator tags */}
           <div className="flex gap-2 px-4 py-2 flex-wrap border-b border-[var(--border)]">
             {[
-              { l: `Change: ${reliance ? `${reliance.change_pct}%` : 'Waiting'}`, c: 'text-brand-blue bg-brand-blue/10 border-brand-blue/20' },
-              { l: `Close: ${formatPrice(reliance?.close)}`, c: 'text-brand-gold bg-brand-gold/10 border-brand-gold/20' },
-              { l: `Updated: ${reliance ? new Date(reliance.timestamp).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : 'Waiting'}`, c: 'text-brand-green bg-brand-green/10 border-brand-green/20' },
+              { l: `Change: ${selectedQuote ? `${selectedQuote.change_pct}%` : 'Waiting'}`, c: 'text-brand-blue bg-brand-blue/10 border-brand-blue/20' },
+              { l: `Close: ${formatPrice(selectedQuote?.close)}`, c: 'text-brand-gold bg-brand-gold/10 border-brand-gold/20' },
+              { l: `Updated: ${selectedQuote ? new Date(selectedQuote.timestamp).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : 'Waiting'}`, c: 'text-brand-green bg-brand-green/10 border-brand-green/20' },
             ].map(t => (
               <span key={t.l} className={clsx('text-[10px] font-mono font-semibold px-2 py-0.5 rounded border', t.c)}>{t.l}</span>
             ))}
           </div>
-          <div className="p-2"><CandleChart interval={interval} /></div>
+          <div className="p-2"><CandleChart symbol={chartSymbol} interval={interval} /></div>
         </div>
 
         {/* Right column */}
@@ -296,7 +359,7 @@ export default function Dashboard() {
       </div>
 
       {/* Bottom 3-column grid */}
-      <div className="grid grid-cols-[1fr_1fr_320px] gap-4">
+      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_320px] gap-4">
         {/* Open Positions */}
         <div className="glass-card overflow-hidden">
           <div className="px-4 py-3 border-b border-[var(--border)] flex items-center justify-between">
@@ -327,7 +390,7 @@ export default function Dashboard() {
                     {p.pnl >= 0 ? '+' : ''}₹{Math.abs(p.pnl)}
                   </td>
                   <td className="px-4 py-3">
-                    <button disabled={!botStatus?.market_open} onClick={() => exitPosition(p)} title={botStatus?.market_open ? 'Close position' : 'Market closed'} className="text-[9px] px-2 py-0.5 rounded border border-brand-red/30 text-brand-red bg-brand-red/10 font-bold hover:bg-brand-red/20 disabled:opacity-40">Exit</button>
+                    <button disabled={!botStatus?.market_open || exitMutation.isPending} onClick={() => exitPosition(p)} title={botStatus?.market_open ? 'Close paper position' : 'Market closed'} className="text-[9px] px-2 py-0.5 rounded border border-brand-red/30 text-brand-red bg-brand-red/10 font-bold hover:bg-brand-red/20 disabled:opacity-40">{exitMutation.isPending ? '...' : 'Exit'}</button>
                   </td>
                 </tr>
               ))}

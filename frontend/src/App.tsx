@@ -12,6 +12,7 @@ import Screener from '@/pages/Screener';
 import MLModels from '@/pages/MLModels';
 import Reports from '@/pages/Reports';
 import Alerts from '@/pages/Alerts';
+import Backtest from '@/pages/Backtest';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const token = useAuthStore((s) => s.token);
@@ -34,7 +35,8 @@ export default function App() {
         <Route path="markets"   element={<Markets />} />
         <Route path="history"   element={<TradeHistory />} />
         <Route path="ai-engine" element={<AIEngine />} />
-        <Route path="backtest"  element={<Screener />} />
+        <Route path="backtest"  element={<Backtest />} />
+        <Route path="screener"  element={<Screener />} />
         <Route path="models"    element={<MLModels />} />
         <Route path="reports"   element={<Reports />} />
         <Route path="alerts"    element={<Alerts />} />

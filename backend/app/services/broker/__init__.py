@@ -11,7 +11,10 @@ def get_broker() -> BrokerBase:
     Returns the configured broker instance.
     Controlled by ACTIVE_BROKER in .env
     """
+    # Live execution requires both the broker selection and live mode.
     broker_name = settings.active_broker.lower()
+    if settings.trading_mode.lower() != "live":
+        broker_name = "paper"
 
     if broker_name == "angelone":
         from app.services.broker.angelone import AngelOneBroker

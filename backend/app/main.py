@@ -8,7 +8,7 @@ import redis.asyncio as aioredis
 
 from app.config import settings
 from app.database import init_db, engine
-from app.routers import auth, trading, market, portfolio, users, websocket
+from app.routers import auth, trading, market, portfolio, users, websocket, backtest
 from app.core.startup import create_admin_user
 
 
@@ -56,6 +56,7 @@ app.include_router(market.router,    prefix="/api/market",    tags=["market"])
 app.include_router(portfolio.router, prefix="/api/portfolio", tags=["portfolio"])
 app.include_router(users.router,     prefix="/api/users",     tags=["users"])
 app.include_router(websocket.router, prefix="/ws",            tags=["websocket"])
+app.include_router(backtest.router, prefix="/api/backtest", tags=["backtest"])
 
 
 @app.get("/health")

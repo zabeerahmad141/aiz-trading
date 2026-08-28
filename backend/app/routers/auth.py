@@ -9,7 +9,7 @@ from app.models.user import User, UserRole
 from app.core.security import (
     verify_password, hash_password,
     create_access_token, create_refresh_token,
-    get_current_user, require_admin,
+    decode_token, get_current_user, require_admin,
 )
 
 router = APIRouter()
@@ -26,6 +26,10 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
     role: str
     username: str
+
+
+class RefreshRequest(BaseModel):
+    refresh_token: str
 
 
 class CreateUserRequest(BaseModel):
@@ -70,6 +74,27 @@ async def get_me(current_user: User = Depends(get_current_user)):
         "broker": current_user.broker,
         "last_login": current_user.last_login,
     }
+
+
+@router.post("/refresh", response_model=TokenResponse)
+async def refresh_access_token(payload: RefreshRequest, db: AsyncSession = Depends(get_db)):
+    token_data = decode_token(payload.refresh_token)
+    if token_data.get("type") != "refresh":
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh token required")
+
+    user_id = token_data.get("sub")
+    result = await db.execute(select(User).where(User.id == int(user_id), User.is_active == True))
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+
+    token_data = {"sub": str(user.id), "role": user.role.value}
+    return TokenResponse(
+        access_token=create_access_token(token_data),
+        refresh_token=create_refresh_token(token_data),
+        role=user.role.value,
+        username=user.username,
+    )
 
 
 @router.post("/users", dependencies=[Depends(require_admin)])

@@ -15,12 +15,16 @@ MIN_CONFIDENCE = float(os.getenv("MIN_CONFIDENCE", "65"))
 model = XGBoostTradingModel()
 
 
-async def generate_signals(symbols: list[str]) -> list[dict]:
+async def generate_signals(
+    symbols: list[str],
+    model_instance: XGBoostTradingModel | None = None,
+) -> list[dict]:
     """
     Generates trading signals for all symbols in watchlist.
     Called every PREDICTION_INTERVAL seconds during market hours.
     """
     signals = []
+    active_model = model_instance or model
 
     for symbol in symbols:
         try:
@@ -39,7 +43,7 @@ async def generate_signals(symbols: list[str]) -> list[dict]:
             latest = df_feat.tail(1)
 
             # Run ML prediction
-            pred = model.predict(latest)
+            pred = active_model.predict(latest)
 
             signal_data = {
                 "symbol": symbol,
@@ -70,11 +74,12 @@ async def push_signals_to_backend(signals: list[dict]):
     """Push generated signals to backend via internal API."""
     try:
         async with httpx.AsyncClient() as client:
-            await client.post(
+            response = await client.post(
                 f"{BACKEND_URL}/api/trading/ai-signals",
                 json={"signals": signals},
                 headers={"X-Internal-Key": os.getenv("INTERNAL_API_KEY", "")},
                 timeout=10,
             )
+            response.raise_for_status()
     except Exception as e:
         logger.warning(f"Could not push signals to backend: {e}")

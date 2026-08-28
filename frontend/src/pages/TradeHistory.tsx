@@ -14,10 +14,11 @@ export default function TradeHistory() {
     queryFn: () => getPortfolioSummary().then(r => r.data),
   });
 
-  const totalPnl   = trades.reduce((s: number, t: any) => s + (t.pnl || 0), 0);
-  const wins       = trades.filter((t: any) => t.pnl > 0).length;
-  const losses     = trades.filter((t: any) => t.pnl < 0).length;
-  const winRate    = trades.length > 0 ? ((wins / trades.length) * 100).toFixed(1) : '0';
+  const completedTrades = trades.filter((t: any) => t.pnl != null);
+  const totalPnl   = completedTrades.reduce((s: number, t: any) => s + Number(t.pnl || 0), 0);
+  const wins       = completedTrades.filter((t: any) => t.pnl > 0).length;
+  const losses     = completedTrades.filter((t: any) => t.pnl < 0).length;
+  const winRate    = completedTrades.length > 0 ? ((wins / completedTrades.length) * 100).toFixed(1) : '0';
 
   return (
     <div className="space-y-4 animate-[fade-in_0.3s_ease]">
@@ -29,10 +30,10 @@ export default function TradeHistory() {
       {/* Summary stats */}
       <div className="grid grid-cols-4 gap-3">
         {[
-          { label: 'Total Trades', value: trades.length, color: 'text-brand-blue' },
+          { label: 'Recorded executions', value: trades.length, color: 'text-brand-blue' },
           { label: 'Total P&L',    value: `${totalPnl >= 0 ? '+' : ''}₹${Math.abs(totalPnl).toFixed(0)}`, color: totalPnl >= 0 ? 'text-brand-green' : 'text-brand-red' },
           { label: 'Win Rate',     value: `${winRate}%`, color: 'text-brand-gold' },
-          { label: 'Wins / Losses', value: `${wins} / ${losses}`, color: 'text-text-primary' },
+          { label: 'Closed wins / losses', value: `${wins} / ${losses}`, color: 'text-text-primary' },
         ].map(s => (
           <div key={s.label} className="glass-card p-4">
             <div className="text-[10px] uppercase tracking-widest text-text-muted mb-2">{s.label}</div>

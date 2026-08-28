@@ -230,24 +230,6 @@ class Settings(BaseSettings):
         """Parse comma-separated watchlist into list of symbols."""
         return [s.strip() for s in self.watchlist.split(",") if s.strip()]
 
-        return (
-            "redis://"
-            f"{self.redis_host}:"
-            f"{self.redis_port}/0"
-        )
-
-    # =========================================================
-    # Watchlist
-    # =========================================================
-    @property
-    def watchlist_symbols(self) -> list[str]:
-
-        return [
-            s.strip()
-            for s in self.watchlist.split(",")
-            if s.strip()
-        ]
-
     # =========================================================
     # CORS
     # =========================================================

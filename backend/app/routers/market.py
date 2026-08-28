@@ -1,10 +1,26 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
+from loguru import logger
 from app.services.market_data import get_active_market_data
 from app.core.security import get_current_user
 from app.models.user import User
 from app.config import settings
 
 router = APIRouter()
+
+NIFTY500_POOL = [
+    "RELIANCE", "TCS", "HDFCBANK", "INFY", "WIPRO", "ICICIBANK",
+    "SBIN", "ITC", "KOTAKBANK", "LT", "AXISBANK", "BHARTIARTL",
+    "HINDUNILVR", "MARUTI", "SUNPHARMA", "TITAN", "ULTRACEMCO",
+    "ASIANPAINT", "BAJFINANCE", "HCLTECH", "ADANIENT", "NTPC",
+    "POWERGRID", "M&M", "TATASTEEL", "JSWSTEEL", "ONGC", "COALINDIA",
+    "TECHM", "TATAMOTORS", "NESTLEIND", "DRREDDY", "CIPLA", "GRASIM",
+    "EICHERMOT", "HEROMOTOCO", "APOLLOHOSP", "DIVISLAB", "BRITANNIA",
+]
+
+
+def _get_yfinance():
+    import yfinance as yf
+    return yf
 
 
 @router.get("/quotes")
@@ -76,6 +92,11 @@ async def stock_screener(current_user: User = Depends(get_current_user)):
     Updates the recommended watchlist automatically.
     """
     results = []
+    try:
+        yf = _get_yfinance()
+    except ImportError:
+        raise HTTPException(status_code=503, detail="Yahoo Finance is unavailable")
+
     for symbol in NIFTY500_POOL:
         try:
             ticker = yf.Ticker(f"{symbol}.NS")
@@ -123,7 +144,8 @@ async def stock_screener(current_user: User = Depends(get_current_user)):
                     "score":      score,
                     "reason":     _build_reason(rsi, vol_ratio, ltp > ema9, ltp > ema21),
                 })
-        except Exception:
+        except Exception as exc:
+            logger.debug("Screener skipped {}: {}", symbol, exc)
             continue
 
     results.sort(key=lambda x: x["score"], reverse=True)
