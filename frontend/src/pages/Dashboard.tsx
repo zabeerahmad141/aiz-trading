@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import {
   getPortfolioSummary, getBotStatus, getOpenPositions,
   getTradeHistory, getOHLCV, getQuotes, getPnLChart, getPortfolioSessions, placeOrder,
-  getPortfolioRisk,
+  getPortfolioRisk, getApiStatus,
 } from '@/lib/api';
 import { Wallet, TrendingUp, Target, Bot, Shield, Brain, Zap, RefreshCw, ShoppingCart } from 'lucide-react';
 import clsx from 'clsx';
@@ -12,51 +12,69 @@ import { useAuthStore } from '@/store/auth';
 import { createChart, ColorType, CrosshairMode } from 'lightweight-charts';
 
 // ── Candlestick chart component — fetches real data from backend ────────────
-function CandleChart({ symbol = 'RELIANCE', interval }: { symbol?: string; interval: string }) {
+type ChartView = 'candles' | 'line' | 'area';
+
+function CandleChart({ symbol = 'RELIANCE', interval, view }: { symbol?: string; interval: string; view: ChartView }) {
   const ref = useRef<HTMLDivElement>(null);
   const { data: ohlcvData } = useQuery({
     queryKey: ['ohlcv', symbol, interval],
     queryFn: () => getOHLCV(symbol, '1d', interval).then(r => r.data),
     refetchInterval: 60000,
-    retry: 1,
+    staleTime: 60000,
+    gcTime: 24 * 60 * 60 * 1000,
+    placeholderData: (previousData) => previousData,
+    retry: 2,
   });
 
   useEffect(() => {
     if (!ref.current) return;
     const chart = createChart(ref.current, {
       width: ref.current.clientWidth,
-      height: 300,
+      height: 320,
       layout: { background: { type: ColorType.Solid, color: 'transparent' }, textColor: '#7a8fa6' },
       grid: { vertLines: { color: 'rgba(255,255,255,0.04)' }, horzLines: { color: 'rgba(255,255,255,0.04)' } },
       crosshair: { mode: CrosshairMode.Normal },
-      rightPriceScale: { borderColor: 'rgba(0,212,255,0.12)' },
-      timeScale: { borderColor: 'rgba(0,212,255,0.12)', timeVisible: true },
+      rightPriceScale: { borderColor: 'rgba(0,212,255,0.12)', scaleMargins: { top: 0.08, bottom: 0.24 } },
+      timeScale: { borderColor: 'rgba(0,212,255,0.12)', timeVisible: true, secondsVisible: false },
     });
-    const series = chart.addCandlestickSeries({
+    const series = view === 'candles' ? chart.addCandlestickSeries({
       upColor: '#00e676', downColor: '#ff3d71',
       borderUpColor: '#00e676', borderDownColor: '#ff3d71',
       wickUpColor: 'rgba(0,230,118,0.5)', wickDownColor: 'rgba(255,61,113,0.5)',
-    });
-    const emaLine = chart.addLineSeries({ color: 'rgba(0,212,255,0.7)', lineWidth: 1, priceLineVisible: false });
+    }) : view === 'area' ? chart.addAreaSeries({
+      lineColor: '#00d4ff', topColor: 'rgba(0,212,255,0.24)', bottomColor: 'rgba(0,212,255,0.02)',
+      lineWidth: 2,
+    }) : chart.addLineSeries({ color: '#00d4ff', lineWidth: 2, priceLineVisible: false });
+    const emaLine = view === 'candles' ? chart.addLineSeries({ color: 'rgba(255,193,7,0.85)', lineWidth: 1, priceLineVisible: false }) : null;
+    const volumeSeries = view === 'candles' ? chart.addHistogramSeries({
+      color: 'rgba(0,212,255,0.35)', priceFormat: { type: 'volume' }, priceScaleId: '',
+    }) : null;
+    if (volumeSeries) chart.priceScale('').applyOptions({ scaleMargins: { top: 0.82, bottom: 0.02 } });
 
     // Keep the chart empty when the provider has no data, such as after market close.
     const candles = ohlcvData?.candles;
     const data: any[] = candles && candles.length > 5 ? candles : [];
     if (!data.length) return () => chart.remove();
-    series.setData(data);
+    if (view === 'candles') series.setData(data);
+    else series.setData(data.map(d => ({ time: d.time, value: Number(d.close) })));
+    volumeSeries?.setData(data.map(d => ({
+      time: d.time,
+      value: Number(d.volume || 0),
+      color: d.close >= d.open ? 'rgba(0,230,118,0.35)' : 'rgba(255,61,113,0.35)',
+    })));
 
     // EMA overlay
     let emaVal = data[0]?.close || 2820;
     const emaData = data.map(d => { emaVal = emaVal * 0.9 + d.close * 0.1; return { time: d.time, value: +emaVal.toFixed(2) }; });
-    emaLine.setData(emaData);
+    emaLine?.setData(emaData);
 
     // Live tick update (for real last candle)
     const ro = new ResizeObserver(() => { if (ref.current) chart.applyOptions({ width: ref.current.clientWidth }); });
     ro.observe(ref.current);
     return () => { chart.remove(); ro.disconnect(); };
-  }, [ohlcvData]);
+  }, [ohlcvData, view]);
 
-  return <div ref={ref} className={!ohlcvData?.candles?.length ? 'h-[300px] flex items-center justify-center text-xs text-text-muted' : undefined}>{!ohlcvData?.candles?.length && <span className="animate-pulse">Market chart is resting until fresh candles arrive.</span>}</div>;
+  return <div ref={ref} className={!ohlcvData?.candles?.length ? 'h-[320px] flex items-center justify-center text-xs text-text-muted' : 'h-[320px]'}>{!ohlcvData?.candles?.length && <span className="animate-pulse">No candles available for this symbol.</span>}</div>;
 }
 
 // ── AI Predictions panel ─────────────────────────────────────────────────────
@@ -77,6 +95,29 @@ function AIPredictions({ marketOpen }: { marketOpen: boolean }) {
         </div>
         <div className="text-text-secondary">{marketOpen ? 'Waiting for the next model signal.' : 'The model is resting between sessions.'}</div>
         <div className="mt-1 text-[10px]">Live predictions will appear automatically when signals are published.</div>
+      </div>
+    </div>
+  );
+}
+
+function MarketContext({ status, quotes }: { status?: any; quotes: any[] }) {
+  const validQuotes = quotes.filter(quote => Number(quote.ltp) > 0);
+  const averageChange = validQuotes.length
+    ? validQuotes.reduce((sum, quote) => sum + Number(quote.change_pct || 0), 0) / validQuotes.length
+    : 0;
+  const advancing = validQuotes.filter(quote => Number(quote.change_pct || 0) > 0).length;
+  const mood = !validQuotes.length ? 'Waiting' : averageChange >= 1 ? 'Greedy' : averageChange >= 0.2 ? 'Constructive' : averageChange <= -1 ? 'Fearful' : averageChange <= -0.2 ? 'Cautious' : 'Neutral';
+  const moodColor = mood === 'Greedy' || mood === 'Constructive' ? 'text-brand-green' : mood === 'Fearful' || mood === 'Cautious' ? 'text-brand-red' : 'text-brand-gold';
+  return (
+    <div className="glass-card px-4 py-3 border-brand-blue/20">
+      <div className="flex items-center justify-between gap-3 mb-2">
+        <div className="text-sm font-semibold">Market context</div>
+        <span className={clsx('text-xs font-bold uppercase tracking-wide', moodColor)}>Mood: {mood}</span>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-[11px]">
+        <div><div className="text-text-muted">Current session</div><div className="font-semibold mt-1">{status?.session_state === 'open' ? 'Open' : status?.session_state === 'pre_open' ? 'Pre-open' : 'Closed'}</div><div className="text-text-muted mt-1">{status?.session_comment || 'Checking session status.'}</div></div>
+        <div><div className="text-text-muted">Session timeline</div><div className="mt-1">{status?.previous_session || 'Previous session unavailable.'}</div><div className="text-text-muted mt-1">{status?.next_session || 'Next session unavailable.'}</div></div>
+        <div><div className="text-text-muted">Watchlist breadth</div><div className="font-mono font-bold mt-1">{advancing}/{validQuotes.length} advancing</div><div className="text-text-muted mt-1">Average change {averageChange >= 0 ? '+' : ''}{averageChange.toFixed(2)}%</div></div>
       </div>
     </div>
   );
@@ -171,6 +212,7 @@ function StatCard({ label, value, sub, color, icon: Icon }: any) {
 // ── Main Dashboard ────────────────────────────────────────────────────────────
 export default function Dashboard() {
   const [interval, setInterval] = useState('5m');
+  const [chartView, setChartView] = useState<ChartView>('candles');
   const [pnlPeriod, setPnlPeriod] = useState('today');
   const symbols = ['RELIANCE', 'TCS', 'HDFCBANK', 'INFY', 'WIPRO', 'ICICIBANK', 'BAJFINANCE', 'SBIN', 'ITC', 'KOTAKBANK'];
   const [order, setOrder] = useState({ symbol: symbols[0], quantity: 1, stop_loss: '', target_price: '' });
@@ -181,7 +223,16 @@ export default function Dashboard() {
   const { data: botStatus } = useQuery({ queryKey: ['botStatus'], queryFn: () => getBotStatus().then(r => r.data), refetchInterval: 5000 });
   const { data: positions } = useQuery({ queryKey: ['positions'], queryFn: () => getOpenPositions().then(r => r.data), refetchInterval: 5000 });
   const { data: trades } = useQuery({ queryKey: ['trades'], queryFn: () => getTradeHistory().then(r => r.data) });
-  const { data: quotes = [] } = useQuery({ queryKey: ['quotes'], queryFn: () => getQuotes().then(r => r.data), refetchInterval: 30000 });
+  const { data: quotes = [] } = useQuery({
+    queryKey: ['quotes'],
+    queryFn: () => getQuotes().then(r => r.data),
+    refetchInterval: 30000,
+    staleTime: 30000,
+    gcTime: 24 * 60 * 60 * 1000,
+    placeholderData: (previousData) => previousData,
+    retry: 2,
+  });
+  const { data: apiStatus } = useQuery({ queryKey: ['api-status'], queryFn: () => getApiStatus().then(r => r.data), refetchInterval: 30000 });
   const { data: pnlChart } = useQuery({ queryKey: ['pnl-chart', pnlPeriod], queryFn: () => getPnLChart(pnlPeriod).then(r => r.data), refetchInterval: 30000 });
   const { data: sessionData } = useQuery({ queryKey: ['portfolio-sessions'], queryFn: () => getPortfolioSessions().then(r => r.data), refetchInterval: 60000 });
   const queryClient = useQueryClient();
@@ -238,6 +289,8 @@ export default function Dashboard() {
             : botStatus ? <span className="text-brand-red ml-1">· Market Closed</span> : <span className="text-text-muted ml-1">· Checking market status</span>}
         </p>
       </div>
+
+      <MarketContext status={apiStatus} quotes={quotes} />
 
       {/* Alert banner */}
       <div className="flex items-center gap-3 px-4 py-2.5 rounded-xl bg-brand-blue/5 border border-brand-blue/20 text-xs">
@@ -315,6 +368,13 @@ export default function Dashboard() {
               <select value={chartSymbol} onChange={event => setChartSymbol(event.target.value)} className="bg-transparent text-sm font-semibold text-text-primary outline-none"><option value="RELIANCE">RELIANCE · NSE</option>{symbols.filter(symbol => symbol !== 'RELIANCE').map(symbol => <option key={symbol} value={symbol}>{symbol} · NSE</option>)}</select>
             </div>
             <div className="flex gap-1">
+              {(['candles', 'line', 'area'] as ChartView[]).map((type) => (
+                <button key={type} onClick={() => setChartView(type)} className={clsx('px-2.5 py-1 rounded text-[11px] font-semibold capitalize', chartView === type ? 'bg-brand-blue/15 text-brand-blue border border-brand-blue/25' : 'text-text-muted hover:text-text-primary')}>
+                  {type}
+                </button>
+              ))}
+            </div>
+            <div className="flex gap-1">
               {['1m','5m','15m','1H','1D'].map((t) => (
                 <button key={t} onClick={() => setInterval(t === '1H' ? '1h' : t === '1D' ? '1d' : t)} className={clsx('px-2.5 py-1 rounded text-[11px] font-semibold',
                   interval === (t === '1H' ? '1h' : t === '1D' ? '1d' : t) ? 'bg-brand-blue/15 text-brand-blue border border-brand-blue/25' : 'text-text-muted hover:text-text-primary'
@@ -348,7 +408,11 @@ export default function Dashboard() {
               <span key={t.l} className={clsx('text-[10px] font-mono font-semibold px-2 py-0.5 rounded border', t.c)}>{t.l}</span>
             ))}
           </div>
-          <div className="p-2"><CandleChart symbol={chartSymbol} interval={interval} /></div>
+          <div className="px-4 py-2 border-b border-[var(--border)] flex items-center gap-3 text-[10px] text-text-muted">
+            <span className="font-semibold text-text-secondary">{chartView === 'candles' ? 'Price + volume' : chartView === 'line' ? 'Closing price' : 'Closing price area'}</span>
+            {chartView === 'candles' && <><span className="text-brand-gold">EMA trend</span><span className="text-text-muted">Drag to pan · scroll to zoom</span></>}
+          </div>
+          <div className="p-2"><CandleChart symbol={chartSymbol} interval={interval} view={chartView} /></div>
         </div>
 
         {/* Right column */}

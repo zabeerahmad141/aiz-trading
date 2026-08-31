@@ -4,6 +4,7 @@ from app.services.market_data import get_active_market_data
 from app.core.security import get_current_user
 from app.models.user import User
 from app.config import settings
+from app.services.market_data.yfinance_provider import YFinanceProvider
 
 router = APIRouter()
 
@@ -149,6 +150,8 @@ async def stock_screener(current_user: User = Depends(get_current_user)):
             continue
 
     results.sort(key=lambda x: x["score"], reverse=True)
+    if not results:
+        results = _demo_screener_results()
     return {"screened": results[:15], "total_scanned": len(NIFTY500_POOL)}
 
 
@@ -158,4 +161,26 @@ def _build_reason(rsi: float, vol_ratio: float, above_ema9: bool, above_ema21: b
     if 40 <= rsi <= 55: parts.append(f"RSI buyzone ({rsi:.0f})")
     if vol_ratio >= 1.5: parts.append(f"Vol surge {vol_ratio:.1f}x")
     return " · ".join(parts) if parts else "Momentum play"
+
+
+def _demo_screener_results() -> list[dict]:
+    """Keep paper-mode observation useful when Yahoo historical data is blocked."""
+    results = []
+    for symbol in NIFTY500_POOL:
+        quote = YFinanceProvider._demo_quote(symbol)
+        ema9 = round(quote.ltp * 0.995, 2)
+        ema21 = round(quote.ltp * 0.99, 2)
+        results.append({
+            "symbol": symbol,
+            "ltp": quote.ltp,
+            "change_pct": quote.change_pct,
+            "rsi": 50.0,
+            "vol_ratio": 1.4,
+            "ema9": ema9,
+            "ema21": ema21,
+            "score": 50,
+            "reason": "Paper observation fallback",
+            "data_source": "demo_fallback",
+        })
+    return results
 

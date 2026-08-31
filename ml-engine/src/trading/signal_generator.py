@@ -11,6 +11,8 @@ from src.models.xgboost_model import XGBoostTradingModel
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://backend:8000")
 MIN_CONFIDENCE = float(os.getenv("MIN_CONFIDENCE", "65"))
+CONFIRMATION_CANDLES = int(os.getenv("CONFIRMATION_CANDLES", "10"))
+MIN_CONFIRMATIONS = int(os.getenv("MIN_CONFIRMATIONS", "6"))
 
 model = XGBoostTradingModel()
 
@@ -39,29 +41,59 @@ async def generate_signals(
             if df_feat.empty:
                 continue
 
-            # Get latest feature row (most recent bar)
-            latest = df_feat.tail(1)
+            # Validate the latest model direction against recent candles.
+            # The newest row is used for the trade price; older rows confirm persistence.
+            confirmation_window = df_feat.tail(CONFIRMATION_CANDLES)
+            latest = confirmation_window.tail(1)
 
             # Run ML prediction
             pred = active_model.predict(latest)
+            candle_predictions = [
+                active_model.predict(confirmation_window.iloc[[index]])["signal"]
+                for index in range(len(confirmation_window))
+            ]
+            confirmed_count = candle_predictions.count(pred["signal"])
+            atr_values = confirmation_window["atr"].astype(float)
+            atr_valid = bool((atr_values > 0).all())
+            confirmation_passed = (
+                pred["signal"] == "HOLD"
+                or (confirmed_count >= MIN_CONFIRMATIONS and atr_valid)
+            )
+            final_signal = pred["signal"] if confirmation_passed else "HOLD"
+            validation_reason = (
+                "Confirmed across recent candles"
+                if confirmation_passed
+                else f"Rejected: {confirmed_count}/{len(confirmation_window)} candle confirmation; ATR valid={atr_valid}"
+            )
 
             signal_data = {
                 "symbol": symbol,
-                "signal": pred["signal"],
+                "signal": final_signal,
+                "raw_signal": pred["signal"],
                 "confidence": pred["confidence"],
                 "proba": pred["proba"],
                 "ltp": float(df['close'].iloc[-1]),
+                "confirmation_candles": len(confirmation_window),
+                "confirmation_count": confirmed_count,
+                "confirmation_required": MIN_CONFIRMATIONS,
+                "atr_valid": atr_valid,
+                "validation_reason": validation_reason,
                 "indicators": {
                     "rsi": round(float(latest["rsi"].iloc[0]), 2),
                     "macd": round(float(latest["macd"].iloc[0]), 4),
                     "ema_cross": int(latest["ema_cross"].iloc[0]),
                     "bb_pct": round(float(latest["bb_pct"].iloc[0]), 4),
+                    "atr": round(float(latest["atr"].iloc[0]), 4),
                 },
+                "atr": round(float(latest["atr"].iloc[0]), 4),
             }
 
             signals.append(signal_data)
             logger.info(
-                f"{symbol}: {pred['signal']} | Confidence: {pred['confidence']}% | LTP: ₹{signal_data['ltp']:.2f}"
+                f"{symbol}: {final_signal} | Raw: {pred['signal']} | "
+                f"Confidence: {pred['confidence']}% | "
+                f"Confirmation: {confirmed_count}/{len(confirmation_window)} | "
+                f"LTP: ₹{signal_data['ltp']:.2f}"
             )
 
         except Exception as e:

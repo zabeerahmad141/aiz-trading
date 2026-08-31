@@ -2,9 +2,21 @@
 Market data service factory.
 Returns the configured market data provider (Angel One, Yahoo Finance, etc.)
 """
+from datetime import datetime, timedelta, timezone
+
 from app.config import settings
-from app.services.market_data.base import MarketDataProvider
+from app.services.market_data.base import MarketDataProvider, Quote
 from loguru import logger
+
+
+def quote_is_fresh(quote: Quote, max_age_seconds: int = 30) -> bool:
+    """Reject stale quotes that are too old for a safe trade evaluation."""
+    if quote is None or quote.timestamp is None:
+        return False
+
+    tz = quote.timestamp.tzinfo or timezone.utc
+    age = (datetime.now(tz) - quote.timestamp).total_seconds()
+    return age <= max_age_seconds
 
 
 def get_market_data_provider() -> MarketDataProvider:

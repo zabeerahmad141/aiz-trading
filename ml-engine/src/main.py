@@ -73,6 +73,13 @@ TRADING_MODE = os.getenv(
     "paper",
 )
 
+AUTO_TRADE_MAX_CANDIDATES = int(os.getenv("AUTO_TRADE_MAX_CANDIDATES", "5"))
+
+PAPER_AUTO_TRADING_ENABLED = os.getenv(
+    "PAPER_AUTO_TRADING_ENABLED",
+    "false",
+).lower() == "true"
+
 
 risk_manager = RiskManager(
     capital=CAPITAL
@@ -230,6 +237,7 @@ async def trading_loop():
                             "confidence"
                         ],
                         ltp=sig["ltp"],
+                        atr=sig.get("atr"),
                         min_confidence=float(
                             os.getenv(
                                 "MIN_CONFIDENCE",
@@ -267,6 +275,14 @@ async def trading_loop():
             # -------------------------------------------------
             # Execute approved trades
             # -------------------------------------------------
+            approved.sort(
+                key=lambda sig: (
+                    0 if sig["signal"] == "SELL" else 1,
+                    -float(sig.get("confidence", 0)),
+                )
+            )
+            selected = approved[:max(0, AUTO_TRADE_MAX_CANDIDATES)]
+
             if not approved:
 
                 logger.info(
@@ -277,12 +293,16 @@ async def trading_loop():
             else:
 
                 logger.info(
-                    f"{len(approved)} "
-                    "trade(s) approved "
-                    "for execution."
+                    f"{len(approved)} approved signal(s); "
+                    f"selecting {len(selected)} trade(s) for execution."
                 )
 
-                for sig in approved:
+                if TRADING_MODE.lower() == "paper" and not PAPER_AUTO_TRADING_ENABLED:
+                    logger.info("Paper auto-trading disabled; approved signals will not be executed.")
+                    await asyncio.sleep(PREDICTION_INTERVAL)
+                    continue
+
+                for sig in selected:
 
                     # Double-check market status
                     # immediately before execution.

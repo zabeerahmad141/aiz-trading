@@ -7,7 +7,13 @@ export default function Markets() {
   const { data: quotes = [], isLoading, isError, isFetching, dataUpdatedAt, refetch } = useQuery({
     queryKey: ['quotes'],
     queryFn: () => getQuotes().then(r => r.data),
-    refetchInterval: 10000,
+    refetchInterval: 8000,
+    staleTime: 8000,
+    gcTime: 24 * 60 * 60 * 1000,
+    placeholderData: (previousData) => previousData,
+    retry: 2,
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
   });
   const { data: apiStatus } = useQuery({
     queryKey: ['api-status'],

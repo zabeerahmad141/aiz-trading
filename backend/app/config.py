@@ -1,5 +1,5 @@
 from pydantic_settings import BaseSettings
-from functools import lru_cache
+from pydantic import field_validator
 
 
 class Settings(BaseSettings):
@@ -45,6 +45,17 @@ class Settings(BaseSettings):
     # =========================================================
     active_broker: str = "paper"
     trading_mode: str = "paper"
+    live_trading_enabled: bool = False
+    paper_auto_trading_enabled: bool = False
+
+    @property
+    def is_live_trading_allowed(self) -> bool:
+        """Live execution is blocked unless the operator explicitly opts in."""
+        return (
+            self.trading_mode.lower() == "live"
+            and self.active_broker.lower() != "paper"
+            and self.live_trading_enabled is True
+        )
 
     # =========================================================
     # Market Data Provider
@@ -178,6 +189,27 @@ class Settings(BaseSettings):
         "admin@aiz-trade.local"
     )
 
+    @field_validator(
+        "secret_key",
+        "jwt_secret",
+        "postgres_password",
+        "admin_password",
+        mode="after",
+    )
+    @classmethod
+    def validate_secret_strength(cls, value: str) -> str:
+        """Reject empty or obviously unsafe mandatory secrets at startup."""
+        if len(value) < 8:
+            raise ValueError("mandatory secrets must contain at least 8 characters")
+        return value
+
+    @field_validator("internal_api_key")
+    @classmethod
+    def validate_internal_key(cls, value: str) -> str:
+        if value and len(value) < 32:
+            raise ValueError("INTERNAL_API_KEY must contain at least 32 characters when set")
+        return value
+
     # =========================================================
     # Notifications
     # =========================================================
@@ -247,9 +279,8 @@ class Settings(BaseSettings):
         case_sensitive = False
 
 
-@lru_cache()
 def get_settings() -> Settings:
     return Settings()
 
 
-settings = get_settings()
+settings = Settings()

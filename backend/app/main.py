@@ -9,7 +9,7 @@ import redis.asyncio as aioredis
 from app.config import settings
 from app.database import init_db, engine
 from app.routers import auth, trading, market, portfolio, users, websocket, backtest
-from app.core.startup import create_admin_user
+from app.core.startup import create_admin_user, log_safe_configuration
 
 
 @asynccontextmanager
@@ -18,6 +18,7 @@ async def lifespan(app: FastAPI):
     logger.info("Starting AI Z Trading Engine...")
     await init_db()
     await create_admin_user()
+    log_safe_configuration()
     app.state.redis = await aioredis.from_url(settings.redis_url, decode_responses=True)
     logger.info("AI Z is ready.")
     yield
@@ -74,6 +75,21 @@ async def api_status():
     t = ist_now.time()
     from datetime import time as dtime
     market_open = weekday < 5 and dtime(9, 15) <= t <= dtime(15, 30)
+    if weekday >= 5:
+        session_state = "closed"
+        session_comment = "Weekend session closed; archived data remains available."
+    elif t < dtime(9, 15):
+        session_state = "pre_open"
+        session_comment = "Pre-open session; previous close remains the latest completed session."
+    elif market_open:
+        session_state = "open"
+        session_comment = "Live session; quotes and paper signals may update."
+    else:
+        session_state = "closed"
+        session_comment = "Session closed; history, trades, and the last available quotes remain available."
+
+    previous_day = "Friday" if weekday == 0 else ("Sunday" if weekday == 6 else "yesterday")
+    next_day = "Monday" if weekday >= 4 else "tomorrow"
     return {
         "api": "connected",
         "server_time_ist": ist_now.strftime("%Y-%m-%d %H:%M:%S IST"),
@@ -81,4 +97,8 @@ async def api_status():
         "weekday": ist_now.strftime("%A"),
         "broker": settings.active_broker,
         "trading_mode": settings.trading_mode,
+        "session_state": session_state,
+        "session_comment": session_comment,
+        "previous_session": f"Previous scheduled session: {previous_day}, close at 15:30 IST.",
+        "next_session": f"Next scheduled session: {next_day}, opens at 09:15 IST.",
     }

@@ -42,15 +42,19 @@ const navSections = [
 export default function Layout() {
   const { username, role, logout } = useAuthStore();
   const navigate = useNavigate();
-  const { data: botStatus, isLoading: botStatusLoading, isError: botStatusError } = useQuery({
+  const { data: botStatus, isLoading: botStatusLoading, isError: botStatusError, isFetching: botStatusFetching } = useQuery({
     queryKey: ['botStatus'],
     queryFn: () => getBotStatus().then(response => response.data),
-    refetchInterval: 10000,
+    refetchInterval: 5000,
+    staleTime: 5000,
+    retry: 2,
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
   });
   const isPaper = botStatus?.mode !== 'live';
   const botRunning = botStatus?.is_running === true;
-  const botLabel = botStatusLoading ? 'CHECKING' : botStatusError ? 'UNAVAILABLE' : botRunning ? (isPaper ? 'PAPER' : 'LIVE') : 'STOPPED';
-  const modeLabel = botStatus?.mode || (botStatusLoading ? 'Checking status' : 'Unavailable');
+  const botLabel = botStatusLoading || botStatusFetching ? 'CHECKING' : botStatusError ? 'UNAVAILABLE' : botRunning ? (isPaper ? 'PAPER' : 'LIVE') : 'STOPPED';
+  const modeLabel = botStatus?.mode || (botStatusLoading || botStatusFetching ? 'Checking status' : 'Unavailable');
 
   function handleLogout() {
     logout();

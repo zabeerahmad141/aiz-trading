@@ -5,6 +5,9 @@
 The repository is a Docker Compose development stack for an NSE paper-trading platform.
 It is safe to develop and test while the market is closed.
 
+The authoritative future-live development roadmap, implementation gates, security rules,
+and test matrix are in [docs/FUTURE_LIVE_DEVELOPMENT_PLAN.md](docs/FUTURE_LIVE_DEVELOPMENT_PLAN.md).
+
 ### Start locally
 
 ```powershell

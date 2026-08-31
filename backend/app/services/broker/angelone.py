@@ -68,7 +68,7 @@ class AngelOneBroker(BrokerBase):
         ltp = float(fetched[0].get("ltp", 0)) if fetched else 0.0
         if ltp <= 0:
             raise ValueError(f"No valid quote returned for {symbol}")
-        return Quote(symbol=symbol, ltp=ltp, open=ltp, high=ltp, low=ltp, close=ltp, volume=0, change_pct=0.0)
+        return Quote(symbol=symbol, ltp=ltp, open=ltp, high=ltp, low=ltp, close=ltp, volume=0, change_pct=0.0, timestamp=datetime.now(ZoneInfo("Asia/Kolkata")))
 
     async def place_order(self, symbol: str, action: Literal["buy", "sell"], quantity: int, order_type: str = "MARKET", price: float | None = None) -> OrderResult:
         token = await self._get_instrument_token(symbol)

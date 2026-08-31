@@ -11,7 +11,7 @@ from typing import Literal
 from loguru import logger
 
 from app.services.broker.base import BrokerBase, OrderResult, Quote
-from app.services.market_data import get_active_market_data
+from app.services.market_data import get_active_market_data, quote_is_fresh
 from app.config import settings
 
 
@@ -72,6 +72,7 @@ class PaperBroker(BrokerBase):
             close=quote.close,
             volume=quote.volume,
             change_pct=quote.change_pct,
+            timestamp=quote.timestamp,
         )
 
     async def place_order(
@@ -83,6 +84,8 @@ class PaperBroker(BrokerBase):
         price: float | None = None,
     ) -> OrderResult:
         quote = await self.get_quote(symbol)
+        if not quote_is_fresh(quote, max_age_seconds=30):
+            raise ValueError(f"Quote for {symbol} is stale; wait for fresh market data before placing an order.")
         exec_price = price or quote.ltp
         order_id = str(uuid.uuid4())[:12].upper()
         cost = exec_price * quantity

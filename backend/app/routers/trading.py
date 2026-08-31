@@ -595,6 +595,12 @@ async def place_ai_order(
         request
     )
 
+    if settings.trading_mode.lower() == "paper" and not settings.paper_auto_trading_enabled:
+        raise HTTPException(
+            status_code=403,
+            detail="Paper auto-trading is disabled",
+        )
+
     # ---------------------------------------------------------
     # 2. Validate payload
     # ---------------------------------------------------------

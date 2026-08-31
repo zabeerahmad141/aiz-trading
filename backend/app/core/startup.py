@@ -25,3 +25,22 @@ async def create_admin_user():
         db.add(admin)
         await db.commit()
         logger.info(f"Admin user '{settings.admin_username}' created.")
+
+
+def log_safe_configuration():
+    """Report configuration state without printing credentials or tokens."""
+    angel_configured = all((
+        settings.angel_api_key,
+        settings.angel_client_id,
+        settings.angel_password,
+        settings.angel_totp_secret,
+    ))
+    logger.info(
+        "Safe configuration | provider={} | broker={} | mode={} | "
+        "angel_credentials_configured={} | live_allowed={}",
+        settings.data_provider,
+        "paper" if not settings.is_live_trading_allowed else settings.active_broker,
+        settings.trading_mode,
+        angel_configured,
+        settings.is_live_trading_allowed,
+    )

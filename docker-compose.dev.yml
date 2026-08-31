@@ -72,6 +72,7 @@ services:
     restart: unless-stopped
     volumes:
       - ml_models:/app/models
+      - historical_data:/app/data/historical
 
   frontend:
     build:
@@ -85,4 +86,5 @@ services:
 volumes:
   pgdata:
   ml_models:
+  historical_data:
   paper_state:

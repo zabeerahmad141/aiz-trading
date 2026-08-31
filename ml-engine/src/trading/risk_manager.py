@@ -32,6 +32,14 @@ TARGET_PCT = float(
     os.getenv("TARGET_PCT", "3.0")
 )
 
+ATR_STOP_MULTIPLIER = float(
+    os.getenv("ATR_STOP_MULTIPLIER", "1.5")
+)
+
+ATR_TARGET_MULTIPLIER = float(
+    os.getenv("ATR_TARGET_MULTIPLIER", "3.0")
+)
+
 DAILY_LOSS_LIMIT_PCT = float(
     os.getenv("DAILY_LOSS_LIMIT_PCT", "5.0")
 )
@@ -54,6 +62,7 @@ class RiskManager:
         signal: str,
         confidence: float,
         ltp: float,
+        atr: float | None = None,
         min_confidence: float = 65.0,
     ) -> dict:
         """
@@ -204,9 +213,9 @@ class RiskManager:
         )
 
         stop_distance = (
-            ltp *
-            STOP_LOSS_PCT /
-            100
+            atr * ATR_STOP_MULTIPLIER
+            if atr and atr > 0
+            else ltp * STOP_LOSS_PCT / 100
         )
 
         if stop_distance <= 0:
@@ -248,18 +257,13 @@ class RiskManager:
         # -----------------------------------------------------
         # 11. Stop loss
         # -----------------------------------------------------
-        stop_loss = round(
-            ltp *
-            (1 - STOP_LOSS_PCT / 100),
-            2,
-        )
+        stop_loss = round(ltp - stop_distance, 2)
 
         # -----------------------------------------------------
         # 12. Target
         # -----------------------------------------------------
         target = round(
-            ltp *
-            (1 + TARGET_PCT / 100),
+            ltp + (atr * ATR_TARGET_MULTIPLIER if atr and atr > 0 else ltp * TARGET_PCT / 100),
             2,
         )
 

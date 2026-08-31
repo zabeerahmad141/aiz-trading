@@ -4,6 +4,7 @@ Add a new broker: create a new class inheriting BrokerBase.
 """
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Literal
 
 
@@ -28,6 +29,7 @@ class Quote:
     close: float
     volume: int
     change_pct: float
+    timestamp: datetime | None = None
 
 
 class BrokerBase(ABC):

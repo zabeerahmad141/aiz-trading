@@ -3,13 +3,57 @@ Yahoo Finance market data provider (fallback).
 Used when Angel One unavailable.
 """
 import asyncio
+import math
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from loguru import logger
 
 from app.services.market_data.base import MarketDataProvider, Quote, OHLCV
+
+
+_DEMO_BASE_PRICES = {
+    "RELIANCE": 2915.0,
+    "TCS": 4150.0,
+    "HDFCBANK": 1745.0,
+    "INFY": 1565.0,
+    "WIPRO": 471.0,
+    "ICICIBANK": 1250.0,
+    "BAJFINANCE": 7035.0,
+    "SBIN": 875.0,
+    "ITC": 455.0,
+    "KOTAKBANK": 1770.0,
+    "LT": 3350.0,
+    "AXISBANK": 1185.0,
+    "BHARTIARTL": 1650.0,
+    "HINDUNILVR": 2460.0,
+    "MARUTI": 12300.0,
+    "SUNPHARMA": 1495.0,
+    "TITAN": 3550.0,
+    "ULTRACEMCO": 11200.0,
+    "ASIANPAINT": 2500.0,
+    "HCLTECH": 1600.0,
+    "ADANIENT": 3270.0,
+    "NTPC": 361.0,
+    "POWERGRID": 285.0,
+    "M&M": 2900.0,
+    "TATASTEEL": 170.0,
+    "JSWSTEEL": 955.0,
+    "ONGC": 297.0,
+    "COALINDIA": 520.0,
+    "TECHM": 1585.0,
+    "TATAMOTORS": 1040.0,
+    "NESTLEIND": 2385.0,
+    "DRREDDY": 6320.0,
+    "CIPLA": 1460.0,
+    "GRASIM": 2360.0,
+    "EICHERMOT": 4950.0,
+    "HEROMOTOCO": 4650.0,
+    "APOLLOHOSP": 6920.0,
+    "DIVISLAB": 4080.0,
+    "BRITANNIA": 5360.0,
+}
 
 
 class YFinanceProvider(MarketDataProvider):
@@ -45,6 +89,29 @@ class YFinanceProvider(MarketDataProvider):
         return quote
 
     @staticmethod
+    def _demo_quote(symbol: str) -> Quote:
+        base = _DEMO_BASE_PRICES.get(symbol.upper(), 1000.0)
+        drift = (abs(hash(symbol.upper())) % 1000) / 100.0 - 5.0
+        ltp = round(base + drift, 2)
+        open_p = round(ltp * 0.995, 2)
+        high = round(max(ltp, open_p) * 1.01, 2)
+        low = round(min(ltp, open_p) * 0.99, 2)
+        close = round(ltp, 2)
+        volume = 250000 + (abs(hash(symbol.upper())) % 300000)
+        change_pct = round(((ltp - open_p) / open_p) * 100, 2) if open_p else 0.0
+        return Quote(
+            symbol=symbol.upper(),
+            ltp=ltp,
+            open=open_p,
+            high=high,
+            low=low,
+            close=close,
+            volume=volume,
+            change_pct=change_pct,
+            timestamp=datetime.now(ZoneInfo("Asia/Kolkata")),
+        )
+
+    @staticmethod
     def _fetch_quote(symbol: str) -> Quote:
         try:
             import yfinance as yf
@@ -54,7 +121,8 @@ class YFinanceProvider(MarketDataProvider):
             if hist.empty:
                 hist = ticker.history(period="1d", interval="5m", auto_adjust=False)
             if hist.empty:
-                raise ValueError(f"No price data found for {symbol}")
+                logger.warning(f"Yahoo Finance returned no price history for {symbol}; using demo fallback values.")
+                return YFinanceProvider._demo_quote(symbol)
 
             close_series = hist["Close"].dropna()
             open_series = hist["Open"].dropna()
@@ -63,7 +131,8 @@ class YFinanceProvider(MarketDataProvider):
             volume_series = hist["Volume"].dropna()
 
             if close_series.empty:
-                raise ValueError(f"No close data found for {symbol}")
+                logger.warning(f"Yahoo Finance close data missing for {symbol}; using demo fallback values.")
+                return YFinanceProvider._demo_quote(symbol)
 
             latest = close_series.iloc[-1]
             prev_close = close_series.iloc[-2] if len(close_series) > 1 else latest
@@ -87,19 +156,41 @@ class YFinanceProvider(MarketDataProvider):
                 timestamp=datetime.now(ZoneInfo("Asia/Kolkata")),
             )
         except Exception as e:
-            logger.warning(f"Yahoo Finance quote fallback failed for {symbol}: {e}. "
-                           "The backend will return a safe zero-value quote instead of crashing.")
-            return Quote(
-                symbol=symbol,
-                ltp=0.0,
-                open=0.0,
-                high=0.0,
-                low=0.0,
-                close=0.0,
-                volume=0,
-                change_pct=0.0,
-                timestamp=datetime.now(ZoneInfo("Asia/Kolkata")),
-            )
+            logger.warning(f"Yahoo Finance quote fallback failed for {symbol}: {e}. Using demo market fallback values.")
+            return YFinanceProvider._demo_quote(symbol)
+
+    @staticmethod
+    def _demo_ohlcv(symbol: str, interval: str) -> list[OHLCV]:
+        """Generate clearly synthetic candles for paper-mode UI observation."""
+        interval_minutes = {
+            "1m": 1,
+            "5m": 5,
+            "15m": 15,
+            "1h": 60,
+            "1d": 1440,
+        }.get(interval, 5)
+        quote = YFinanceProvider._demo_quote(symbol)
+        step = timedelta(minutes=interval_minutes)
+        now = datetime.now(ZoneInfo("Asia/Kolkata")).replace(second=0, microsecond=0)
+        candles: list[OHLCV] = []
+        phase = (abs(hash(symbol.upper())) % 360) * math.pi / 180
+        previous_close = quote.ltp * (1 - 0.002)
+        for index in range(60):
+            wave = math.sin(index * 0.42 + phase) * 0.004
+            pullback = math.sin(index * 0.13 + phase * 0.5) * 0.002
+            drift = ((index / 59) - 0.5) * 0.002
+            close = round(quote.ltp * (1 + wave + pullback + drift), 2)
+            open_price = round(previous_close, 2)
+            candles.append(OHLCV(
+                timestamp=now - step * (59 - index),
+                open=open_price,
+                high=round(max(open_price, close) * 1.002, 2),
+                low=round(min(open_price, close) * 0.998, 2),
+                close=close,
+                volume=max(1, int((quote.volume // 60) * (1 + abs(wave) * 40))),
+            ))
+            previous_close = close
+        return candles
 
     async def get_ohlcv(
         self,
@@ -122,6 +213,10 @@ class YFinanceProvider(MarketDataProvider):
             ticker = yf.Ticker(f"{symbol}.NS")
             hist = ticker.history(period=period, interval=interval)
 
+            if hist.empty:
+                logger.warning(f"Yahoo Finance returned no OHLCV history for {symbol}; using demo fallback candles.")
+                return YFinanceProvider._demo_ohlcv(symbol, interval)
+
             candles = []
             for ts, row in hist.iterrows():
                 ohlcv = OHLCV(
@@ -136,8 +231,8 @@ class YFinanceProvider(MarketDataProvider):
 
             return candles
         except Exception as e:
-            logger.error(f"Yahoo Finance OHLCV error for {symbol}: {e}")
-            return []
+            logger.warning(f"Yahoo Finance OHLCV error for {symbol}: {e}; using demo fallback candles.")
+            return YFinanceProvider._demo_ohlcv(symbol, interval)
 
     async def is_market_open(self) -> bool:
         """Check if NSE market is currently open."""

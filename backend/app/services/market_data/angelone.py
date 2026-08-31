@@ -3,6 +3,7 @@ Angel One SmartAPI market data provider.
 Free NSE market data via Angel One broker.
 """
 import asyncio
+import os
 from datetime import datetime, time as dtime
 from typing import Optional
 from zoneinfo import ZoneInfo
@@ -31,9 +32,16 @@ class AngelOneMarketData(MarketDataProvider):
         self.smartapi = None
         self.jwt_token = None
         self.instrument_tokens: dict[str, str] = {}  # symbol -> token cache
+        self._connect_lock = asyncio.Lock()
+        self._max_request_attempts = max(1, int(os.getenv("ANGELONE_MAX_REQUEST_ATTEMPTS", "2")))
+        self._reconnect_delay = max(0.0, float(os.getenv("ANGELONE_RECONNECT_DELAY_SECONDS", "1")))
 
     async def connect(self) -> bool:
         """Authenticate with Angel One SmartAPI."""
+        async with self._connect_lock:
+            return await self._connect_once()
+
+    async def _connect_once(self) -> bool:
         try:
             # Import here to avoid import error if package not installed
             from SmartApi import SmartConnect
@@ -56,7 +64,8 @@ class AngelOneMarketData(MarketDataProvider):
             totp_value = totp.now()
 
             # Login
-            login_response = self.smartapi.generateSession(
+            login_response = await asyncio.to_thread(
+                self.smartapi.generateSession,
                 settings.angel_client_id,
                 settings.angel_password,
                 totp_value,
@@ -65,10 +74,11 @@ class AngelOneMarketData(MarketDataProvider):
             if login_response.get("status"):
                 self.jwt_token = login_response.get("data", {}).get("jwtToken")
                 self.connected = True
-                logger.info(f"✓ Angel One connected | Client: {settings.angel_client_id}")
+                masked_client = f"***{settings.angel_client_id[-4:]}"
+                logger.info("✓ Angel One connected | Client: {}", masked_client)
                 return True
             else:
-                logger.error(f"Angel One login failed: {login_response}")
+                logger.error("Angel One login failed with status=false")
                 return False
 
         except ImportError:
@@ -76,7 +86,31 @@ class AngelOneMarketData(MarketDataProvider):
             return False
         except Exception as e:
             logger.error(f"Angel One connection error: {e}")
+            self.connected = False
             return False
+
+    def _invalidate_connection(self):
+        self.connected = False
+        self.jwt_token = None
+        self.smartapi = None
+
+    async def _call_with_reconnect(self, operation):
+        """Retry one broker request after re-authentication, without retry storms."""
+        for attempt in range(self._max_request_attempts):
+            if not self.connected and not await self.connect():
+                break
+            try:
+                response = await asyncio.to_thread(operation)
+                if response and response.get("status", True):
+                    return response
+                raise ConnectionError("Angel One returned an unsuccessful response")
+            except Exception as exc:
+                self._invalidate_connection()
+                if attempt + 1 < self._max_request_attempts:
+                    logger.warning("Angel One request failed; reconnecting before retry: {}", exc)
+                    if self._reconnect_delay:
+                        await asyncio.sleep(self._reconnect_delay)
+        return None
 
     async def get_quote(self, symbol: str) -> Quote:
         """
@@ -84,7 +118,7 @@ class AngelOneMarketData(MarketDataProvider):
         
         Falls back to Yahoo Finance if Angel One unavailable.
         """
-        if not self.connected:
+        if not self.connected and not await self.connect():
             logger.warning("Angel One not connected, falling back to Yahoo Finance")
             return await self._get_quote_yfinance(symbol)
 
@@ -96,7 +130,9 @@ class AngelOneMarketData(MarketDataProvider):
                 return await self._get_quote_yfinance(symbol)
 
             # Fetch LTP
-            ltp_data = self.smartapi.ltpData(mode="LTP", exchangeTokens={"NSE": [token]})
+            ltp_data = await self._call_with_reconnect(
+                lambda: self.smartapi.ltpData(mode="LTP", exchangeTokens={"NSE": [token]})
+            )
             
             if not ltp_data or not ltp_data.get("data"):
                 logger.warning(f"No quote data for {symbol}, falling back to Yahoo Finance")
@@ -163,12 +199,14 @@ class AngelOneMarketData(MarketDataProvider):
             from_date = self._calculate_from_date(period)
             
             # Request candlestick data
-            candle_data = self.smartapi.getCandleData(
-                "NSE",
-                token,
-                interval,
-                from_date,
-                datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%d-%m-%Y"),
+            candle_data = await self._call_with_reconnect(
+                lambda: self.smartapi.getCandleData(
+                    "NSE",
+                    token,
+                    interval,
+                    from_date,
+                    datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%d-%m-%Y"),
+                )
             )
 
             if not candle_data or not candle_data.get("data"):
@@ -225,7 +263,7 @@ class AngelOneMarketData(MarketDataProvider):
 
         try:
             # Request instrument master list (cached by Angel One)
-            instruments = self.smartapi.getInstrumentList()
+            instruments = await asyncio.to_thread(self.smartapi.getInstrumentList)
             
             if not instruments:
                 logger.warning("Could not fetch instrument list from Angel One")
