@@ -3,6 +3,7 @@ Trading Signal Generator — orchestrates ML model predictions
 into actionable BUY/SELL/HOLD signals with risk parameters.
 """
 import os
+import uuid
 import httpx
 from loguru import logger
 from src.data.fetcher import fetch_intraday
@@ -67,6 +68,7 @@ async def generate_signals(
             )
 
             signal_data = {
+                "execution_id": str(uuid.uuid4()),
                 "symbol": symbol,
                 "signal": final_signal,
                 "raw_signal": pred["signal"],

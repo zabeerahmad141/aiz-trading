@@ -109,6 +109,7 @@ class YFinanceProvider(MarketDataProvider):
             volume=volume,
             change_pct=change_pct,
             timestamp=datetime.now(ZoneInfo("Asia/Kolkata")),
+            source="demo",
         )
 
     @staticmethod
@@ -154,6 +155,7 @@ class YFinanceProvider(MarketDataProvider):
                 volume=volume,
                 change_pct=round(change_pct, 2),
                 timestamp=datetime.now(ZoneInfo("Asia/Kolkata")),
+                source="yfinance",
             )
         except Exception as e:
             logger.warning(f"Yahoo Finance quote fallback failed for {symbol}: {e}. Using demo market fallback values.")

@@ -11,7 +11,11 @@ Protects capital with:
   - SELL only when an existing position is available
 """
 
+import json
 import os
+from pathlib import Path
+
+import httpx
 
 from loguru import logger
 
@@ -49,12 +53,74 @@ class RiskManager:
     def __init__(self, capital: float):
         self.capital = capital
         self.daily_pnl = 0.0
+        self.state_path = Path(os.getenv("RISK_STATE_PATH", "/app/models/risk_state.json"))
 
         # symbol -> {
         #     "price": float,
         #     "quantity": int
         # }
         self.open_positions: dict[str, dict] = {}
+        self.restore_state()
+
+    def restore_state(self):
+        """Restore risk state after restart; backend reconciliation remains authoritative."""
+        try:
+            if not self.state_path.exists():
+                return
+            state = json.loads(self.state_path.read_text(encoding="utf-8"))
+            self.daily_pnl = float(state.get("daily_pnl", 0.0))
+            self.open_positions = {
+                str(symbol): {
+                    "price": float(position["price"]),
+                    "quantity": int(position["quantity"]),
+                }
+                for symbol, position in state.get("open_positions", {}).items()
+            }
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            logger.error("Risk state could not be restored: {}", exc)
+
+    def persist_state(self):
+        """Atomically persist circuit-breaker and position state."""
+        try:
+            self.state_path.parent.mkdir(parents=True, exist_ok=True)
+            temporary_path = self.state_path.with_suffix(".tmp")
+            temporary_path.write_text(json.dumps({
+                "daily_pnl": self.daily_pnl,
+                "open_positions": self.open_positions,
+            }), encoding="utf-8")
+            temporary_path.replace(self.state_path)
+        except OSError as exc:
+            logger.error("Risk state could not be persisted: {}", exc)
+
+    async def reconcile_from_backend(self):
+        """Replace local risk state with the backend database state before trading."""
+        backend_url = os.getenv("BACKEND_URL", "http://backend:8000")
+        internal_key = os.getenv("INTERNAL_API_KEY", "")
+        if not internal_key:
+            logger.error("Cannot reconcile risk state: INTERNAL_API_KEY is not configured")
+            return False
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                response = await client.get(
+                    f"{backend_url}/api/trading/ai-risk-state",
+                    headers={"X-Internal-Key": internal_key},
+                )
+                response.raise_for_status()
+                state = response.json()
+            self.daily_pnl = float(state.get("daily_pnl", 0.0))
+            self.open_positions = {
+                str(symbol): {
+                    "price": float(position["price"]),
+                    "quantity": int(position["quantity"]),
+                }
+                for symbol, position in state.get("open_positions", {}).items()
+            }
+            self.persist_state()
+            logger.info("Risk state reconciled from backend: {} open position(s)", len(self.open_positions))
+            return True
+        except Exception as exc:
+            logger.error("Risk reconciliation failed; trading remains blocked: {}", exc)
+            return False
 
     def approve_trade(
         self,
@@ -313,6 +379,7 @@ class RiskManager:
                 "price": price,
                 "quantity": quantity,
             }
+            self.persist_state()
 
             logger.info(
                 f"Risk position opened: "
@@ -344,6 +411,7 @@ class RiskManager:
             ) * entry_quantity
 
             self.daily_pnl += pnl
+            self.persist_state()
 
             logger.info(
                 f"Risk position closed: "

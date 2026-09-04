@@ -1,5 +1,8 @@
 """Angel One SmartAPI broker adapter."""
 import asyncio
+import json
+import time
+from urllib.request import urlopen
 from datetime import datetime, time as dtime
 from typing import Literal, Optional
 from zoneinfo import ZoneInfo
@@ -20,36 +23,57 @@ class AngelOneBroker(BrokerBase):
         self.api = SmartConnect(api_key=settings.angel_api_key)
         self.session_data = None
         self.instrument_tokens: dict[str, str] = {}
+        self._connect_lock = asyncio.Lock()
+        self._next_connect_attempt = 0.0
+        self._instrument_master_loaded = False
 
     async def connect(self) -> bool:
-        try:
-            totp = pyotp.TOTP(settings.angel_totp_secret).now()
-            self.session_data = await asyncio.to_thread(
-                self.api.generateSession,
-                settings.angel_client_id,
-                settings.angel_password,
-                totp,
-            )
-            if self.session_data and self.session_data.get("status"):
-                logger.info("Angel One connected successfully")
-                return True
-            logger.error("Angel One login failed: {}", self.session_data)
-        except Exception as exc:
-            logger.error("Angel One connection error: {}", exc)
-        return False
+        if time.monotonic() < self._next_connect_attempt:
+            return False
+        async with self._connect_lock:
+            if time.monotonic() < self._next_connect_attempt:
+                return False
+            try:
+                totp = pyotp.TOTP(settings.angel_totp_secret).now()
+                self.session_data = await asyncio.to_thread(
+                    self.api.generateSession,
+                    settings.angel_client_id,
+                    settings.angel_password,
+                    totp,
+                )
+                if self.session_data and self.session_data.get("status"):
+                    logger.info("Angel One connected successfully")
+                    return True
+                logger.error("Angel One login failed")
+            except Exception as exc:
+                logger.error("Angel One connection error: {}", exc)
+            self._next_connect_attempt = time.monotonic() + 30
+            return False
 
     async def _get_instrument_token(self, symbol: str) -> Optional[str]:
         symbol = symbol.strip().upper()
         if symbol in self.instrument_tokens:
             return self.instrument_tokens[symbol]
+        if not self._instrument_master_loaded:
+            try:
+                def load_master():
+                    with urlopen("https://margincalculator.angelone.in/OpenAPI_File/files/OpenAPIScripMaster.json", timeout=15) as response:
+                        return json.loads(response.read().decode("utf-8"))
+                instruments = await asyncio.to_thread(load_master)
+                for instrument in instruments or []:
+                    if instrument.get("exch_seg") == "NSE":
+                        symbol_name = str(instrument.get("symbol", "")).upper().removesuffix("-EQ")
+                        token = instrument.get("token")
+                        if symbol_name and token:
+                            self.instrument_tokens.setdefault(symbol_name, str(token))
+                self._instrument_master_loaded = True
+            except Exception as exc:
+                logger.error("Angel One instrument master failed: {}", exc)
+                return None
+        if symbol in self.instrument_tokens:
+            return self.instrument_tokens[symbol]
         try:
-            instruments = await asyncio.to_thread(self.api.getInstrumentList)
-            for instrument in instruments or []:
-                if instrument.get("symbol") == symbol and instrument.get("exchange_type") == "NSE":
-                    token = instrument.get("exchange_token")
-                    if token:
-                        self.instrument_tokens[symbol] = str(token)
-                        return str(token)
+            return self.instrument_tokens.get(symbol)
         except Exception as exc:
             logger.error("Angel One instrument lookup failed for {}: {}", symbol, exc)
         return None
@@ -61,16 +85,22 @@ class AngelOneBroker(BrokerBase):
             raise ValueError(f"No Angel One instrument token found for {symbol}")
         response = await asyncio.to_thread(
             self.api.ltpData,
-            mode="LTP",
-            exchangeTokens={self.NSE_EXCHANGE: [token]},
+            self.NSE_EXCHANGE,
+            f"{symbol}-EQ",
+            token,
         )
         fetched = response.get("data", {}).get("fetched", []) if response else []
         ltp = float(fetched[0].get("ltp", 0)) if fetched else 0.0
         if ltp <= 0:
             raise ValueError(f"No valid quote returned for {symbol}")
-        return Quote(symbol=symbol, ltp=ltp, open=ltp, high=ltp, low=ltp, close=ltp, volume=0, change_pct=0.0, timestamp=datetime.now(ZoneInfo("Asia/Kolkata")))
+        return Quote(symbol=symbol, ltp=ltp, open=ltp, high=ltp, low=ltp, close=ltp, volume=0, change_pct=0.0, timestamp=datetime.now(ZoneInfo("Asia/Kolkata")), source="angelone")
 
     async def place_order(self, symbol: str, action: Literal["buy", "sell"], quantity: int, order_type: str = "MARKET", price: float | None = None) -> OrderResult:
+        quote = await self.get_quote(symbol)
+        if quote.timestamp is None or (datetime.now(ZoneInfo("Asia/Kolkata")) - quote.timestamp).total_seconds() > 30:
+            raise ValueError(f"Live order blocked: stale quote for {symbol}")
+        if quote.source != "angelone":
+            raise ValueError(f"Live order blocked: untrusted quote source for {symbol}")
         token = await self._get_instrument_token(symbol)
         if not token:
             raise ValueError(f"No Angel One instrument token found for {symbol}")

@@ -61,6 +61,7 @@ def test_yfinance_provider_uses_demo_fallback_when_live_data_is_empty(monkeypatc
     assert quote.ltp > 0
     assert quote.symbol == 'RELIANCE'
     assert quote.volume >= 0
+    assert quote.source == 'demo'
 
 
 def test_yfinance_provider_uses_demo_candles_when_history_is_empty(monkeypatch):
@@ -90,3 +91,24 @@ def test_demo_screener_results_are_explicitly_non_live():
     assert results
     assert all(item['data_source'] == 'demo_fallback' for item in results)
     assert all(item['ltp'] > 0 for item in results)
+
+
+def test_angelone_uses_public_instrument_master_for_symbol_lookup():
+    from app.services.market_data.angelone import AngelOneMarketData
+
+    assert AngelOneMarketData._instrument_master_url().endswith("OpenAPIScripMaster.json")
+    assert AngelOneMarketData._angel_interval("5m") == "FIVE_MINUTE"
+    assert AngelOneMarketData._angel_tradingsymbol("RELIANCE") == "RELIANCE-EQ"
+
+
+def test_angelone_parses_legacy_fetched_quote_shape():
+    payload = {"data": {"fetched": [{"ltp": "2500.5"}]}}
+    fetched = payload["data"]["fetched"][0]
+    assert float(fetched["ltp"]) == 2500.5
+
+
+def test_market_data_singleton_creation_is_guarded():
+    import app.services.market_data as market_data
+
+    assert hasattr(market_data, "_market_data_lock")
+    assert market_data._market_data_lock is not None

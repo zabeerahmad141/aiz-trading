@@ -1,3 +1,4 @@
+import asyncio
 import secrets
 
 from datetime import datetime
@@ -27,6 +28,7 @@ from app.models.trade import (
     TradeAction,
     TradeStatus,
     Position,
+    OrderIntent,
 )
 
 from app.models.user import User
@@ -46,6 +48,12 @@ from app.services.risk.exit_manager import ExitManager
 
 
 router = APIRouter()
+
+_execution_locks: dict[str, asyncio.Lock] = {}
+
+
+def _execution_lock(symbol: str) -> asyncio.Lock:
+    return _execution_locks.setdefault(symbol, asyncio.Lock())
 
 
 # =============================================================
@@ -77,6 +85,7 @@ class AITradeRequest(BaseModel):
     ai_reason: str | None = None
 
     ltp: float | None = None
+    execution_id: str | None = None
 
 
 # =============================================================
@@ -565,6 +574,16 @@ async def place_ai_order(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ):
+    symbol = payload.symbol.strip().upper()
+    async with _execution_lock(symbol):
+        return await _place_ai_order_unlocked(payload, request, db)
+
+
+async def _place_ai_order_unlocked(
+    payload: AITradeRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
     """
     Internal ML Engine -> Backend execution endpoint.
 
@@ -616,6 +635,15 @@ async def place_ai_order(
             status_code=400,
             detail="Symbol is required",
         )
+
+    idempotency_key = (
+        payload.execution_id
+        or request.headers.get("X-Idempotency-Key", "").strip()
+    )
+    if not idempotency_key:
+        raise HTTPException(status_code=400, detail="execution_id is required")
+    if len(idempotency_key) > 100:
+        raise HTTPException(status_code=400, detail="execution_id is too long")
 
     if quantity <= 0:
 
@@ -740,20 +768,58 @@ async def place_ai_order(
                 ),
             )
 
+    existing_intent = await db.scalar(
+        select(OrderIntent).where(OrderIntent.idempotency_key == idempotency_key)
+    )
+    if existing_intent is not None:
+        if existing_intent.status == "executed":
+            return {
+                "order_id": existing_intent.broker_order_id,
+                "symbol": existing_intent.symbol,
+                "action": existing_intent.action.value,
+                "quantity": existing_intent.quantity,
+                "status": "already_processed",
+            }
+        raise HTTPException(
+            status_code=409,
+            detail="Matching order intent is pending reconciliation",
+        )
+
+    intent = OrderIntent(
+        idempotency_key=idempotency_key,
+        user_id=current_user.id,
+        symbol=symbol,
+        action=payload.action,
+        quantity=quantity,
+        status="pending",
+    )
+    db.add(intent)
+    await db.flush()
+
     # ---------------------------------------------------------
     # 8. Execute broker order
     # ---------------------------------------------------------
-    result = await broker.place_order(
-        symbol=symbol,
-        action=payload.action.value,
-        quantity=quantity,
-    )
+    try:
+        result = await broker.place_order(
+            symbol=symbol,
+            action=payload.action.value,
+            quantity=quantity,
+        )
+    except Exception:
+        intent.status = "failed"
+        await db.commit()
+        raise
 
     if result.price <= 0:
+        intent.status = "failed"
+        await db.commit()
         raise HTTPException(
             status_code=503,
             detail="Broker returned an invalid execution price",
         )
+
+    intent.status = "executed"
+    intent.broker_order_id = result.order_id
 
     # =========================================================
     # BUY
@@ -942,6 +1008,26 @@ async def receive_ai_signals(
 
     return {
         "received": len(signals)
+    }
+
+
+@router.get("/ai-risk-state")
+async def ai_risk_state(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Return authoritative positions and today's realized P&L to the ML engine."""
+    _verify_internal_api_key(request)
+    positions = (await db.execute(select(Position))).scalars().all()
+    today = datetime.utcnow().date()
+    trades = (await db.execute(select(Trade).where(Trade.exited_at.is_not(None)))).scalars().all()
+    daily_pnl = sum(float(trade.pnl or 0) for trade in trades if trade.exited_at.date() == today)
+    return {
+        "daily_pnl": daily_pnl,
+        "open_positions": {
+            position.symbol: {"price": position.avg_price, "quantity": position.quantity}
+            for position in positions
+        },
     }
 
 

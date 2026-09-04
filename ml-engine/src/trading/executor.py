@@ -70,6 +70,7 @@ async def execute_trade(
         return None
 
     payload = {
+        "execution_id": signal.get("execution_id"),
         "symbol": signal["symbol"],
         "action": signal["signal"].lower(),
         "quantity": int(

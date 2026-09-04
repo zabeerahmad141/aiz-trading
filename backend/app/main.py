@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,6 +11,7 @@ from app.config import settings
 from app.database import init_db, engine
 from app.routers import auth, trading, market, portfolio, users, websocket, backtest
 from app.core.startup import create_admin_user, log_safe_configuration
+from app.services.risk.supervisor import ExitSupervisor
 
 
 @asynccontextmanager
@@ -20,9 +22,15 @@ async def lifespan(app: FastAPI):
     await create_admin_user()
     log_safe_configuration()
     app.state.redis = await aioredis.from_url(settings.redis_url, decode_responses=True)
+    app.state.exit_supervisor = asyncio.create_task(ExitSupervisor().run())
     logger.info("AI Z is ready.")
     yield
     # ── Shutdown ─────────────────────────────────────────────
+    app.state.exit_supervisor.cancel()
+    try:
+        await app.state.exit_supervisor
+    except asyncio.CancelledError:
+        pass
     await app.state.redis.close()
     await engine.dispose()
     logger.info("AI Z shut down cleanly.")

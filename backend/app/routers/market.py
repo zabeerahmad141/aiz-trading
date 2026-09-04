@@ -1,3 +1,5 @@
+import asyncio
+
 from fastapi import APIRouter, Depends, HTTPException
 from loguru import logger
 from app.services.market_data import get_active_market_data
@@ -28,12 +30,10 @@ def _get_yfinance():
 async def get_quotes(current_user: User = Depends(get_current_user)):
     """Get quotes for all symbols in watchlist."""
     market_data = await get_active_market_data()
-    quotes = []
-    
-    for symbol in getattr(settings, 'watchlist_symbols', []):
+    async def fetch_quote(symbol: str):
         try:
-            quote = await market_data.get_quote(symbol)
-            quotes.append({
+            quote = await asyncio.wait_for(market_data.get_quote(symbol), timeout=8)
+            return {
                 "symbol": quote.symbol,
                 "ltp": quote.ltp,
                 "open": quote.open,
@@ -43,10 +43,14 @@ async def get_quotes(current_user: User = Depends(get_current_user)):
                 "volume": quote.volume,
                 "change_pct": quote.change_pct,
                 "timestamp": quote.timestamp.isoformat(),
-            })
-        except Exception as e:
-            # Log error but continue with other symbols
-            pass
+                "source": quote.source,
+            }
+        except Exception as exc:
+            logger.warning("Quote unavailable for {}: {}", symbol, exc)
+            return None
+
+    results = await asyncio.gather(*(fetch_quote(symbol) for symbol in settings.watchlist_symbols))
+    quotes = [quote for quote in results if quote is not None]
     
     return quotes
 
@@ -60,7 +64,14 @@ async def get_ohlcv(
 ):
     """Historical OHLCV data for candlestick chart."""
     market_data = await get_active_market_data()
-    ohlcv_list = await market_data.get_ohlcv(symbol, period=period, interval=interval)
+    try:
+        ohlcv_list = await asyncio.wait_for(
+            market_data.get_ohlcv(symbol, period=period, interval=interval),
+            timeout=12,
+        )
+    except asyncio.TimeoutError:
+        logger.warning("OHLCV request timed out for {}", symbol)
+        ohlcv_list = []
     
     candles = []
     for candle in ohlcv_list:

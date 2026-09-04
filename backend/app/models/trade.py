@@ -17,6 +17,21 @@ class TradeStatus(str, enum.Enum):
     failed = "failed"
 
 
+class OrderIntent(Base):
+    __tablename__ = "order_intents"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    idempotency_key: Mapped[str] = mapped_column(String(100), unique=True, nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(20), nullable=False)
+    action: Mapped[TradeAction] = mapped_column(Enum(TradeAction), nullable=False)
+    quantity: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="pending", nullable=False)
+    broker_order_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class Trade(Base):
     __tablename__ = "trades"
 

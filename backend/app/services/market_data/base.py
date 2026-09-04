@@ -19,6 +19,7 @@ class Quote:
     volume: int
     change_pct: float
     timestamp: datetime
+    source: str = "unknown"
 
 
 @dataclass

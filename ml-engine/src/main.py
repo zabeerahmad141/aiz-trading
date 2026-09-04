@@ -186,6 +186,9 @@ async def trading_loop():
         f"Symbols: {WATCHLIST}"
     )
 
+    reconciled = await risk_manager.reconcile_from_backend()
+    if not reconciled:
+        logger.error("Initial risk reconciliation failed; ML execution will remain disabled")
     while True:
 
         try:
@@ -200,6 +203,11 @@ async def trading_loop():
                     PREDICTION_INTERVAL
                 )
 
+                continue
+
+            if not reconciled:
+                await asyncio.sleep(PREDICTION_INTERVAL)
+                reconciled = await risk_manager.reconcile_from_backend()
                 continue
 
             # -------------------------------------------------

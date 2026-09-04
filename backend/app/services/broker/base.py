@@ -30,6 +30,7 @@ class Quote:
     volume: int
     change_pct: float
     timestamp: datetime | None = None
+    source: str = "unknown"
 
 
 class BrokerBase(ABC):

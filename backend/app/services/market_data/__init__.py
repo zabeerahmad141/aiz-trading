@@ -2,6 +2,7 @@
 Market data service factory.
 Returns the configured market data provider (Angel One, Yahoo Finance, etc.)
 """
+import asyncio
 from datetime import datetime, timedelta, timezone
 
 from app.config import settings
@@ -57,6 +58,7 @@ def _get_yfinance_provider() -> MarketDataProvider:
 
 # Singleton market data instance shared across app
 _market_data_instance: MarketDataProvider | None = None
+_market_data_lock = asyncio.Lock()
 
 
 async def get_active_market_data() -> MarketDataProvider:
@@ -67,12 +69,14 @@ async def get_active_market_data() -> MarketDataProvider:
     """
     global _market_data_instance
     if _market_data_instance is None:
-        _market_data_instance = get_market_data_provider()
-        connected = await _market_data_instance.connect()
-        if connected:
-            logger.info("✓ Market data provider connected and ready")
-        else:
-            logger.warning("Market data provider connection failed, will attempt on first call")
+        async with _market_data_lock:
+            if _market_data_instance is None:
+                _market_data_instance = get_market_data_provider()
+                connected = await _market_data_instance.connect()
+                if connected:
+                    logger.info("✓ Market data provider connected and ready")
+                else:
+                    logger.warning("Market data provider connection failed, will attempt on first call")
     
     return _market_data_instance
 

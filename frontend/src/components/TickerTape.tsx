@@ -17,9 +17,9 @@ function Item({ symbol, ltp, change_pct }: { symbol: string; ltp: number; change
 
 export default function TickerTape() {
   const { data: quotes } = useQuery({
-    queryKey: ['ticker-quotes'],
+    queryKey: ['quotes'],
     queryFn: () => getQuotes().then(r => Array.isArray(r.data) ? r.data : []).catch(() => []),
-    refetchInterval: 15000,
+    refetchInterval: 10000,
     staleTime: 10000,
     retry: 2,
     retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 4000),
