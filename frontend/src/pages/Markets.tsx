@@ -12,7 +12,7 @@ export default function Markets() {
     gcTime: 24 * 60 * 60 * 1000,
     placeholderData: (previousData) => previousData,
     retry: 2,
-    refetchOnWindowFocus: true,
+    refetchOnWindowFocus: false,
     refetchOnReconnect: true,
   });
   const { data: apiStatus } = useQuery({
@@ -53,7 +53,7 @@ export default function Markets() {
           <table className="w-full text-[12px]">
             <thead>
               <tr className="text-text-muted text-[10px] uppercase tracking-wider">
-                {['Symbol','LTP','Open','High','Low','Change %','Volume','AI Signal'].map(h => (
+                {['Company','Symbol','LTP','Open','High','Low','Change %','Volume','Source'].map(h => (
                   <th key={h} className="text-left px-5 py-3 border-b border-[var(--border)] font-semibold">{h}</th>
                 ))}
               </tr>
@@ -61,7 +61,7 @@ export default function Markets() {
             <tbody>
               {quotes.map((q: any) => (
                 <tr key={q.symbol} className="hover:bg-white/[0.02] transition-colors border-b border-white/[0.03] last:border-0">
-                  <td className="px-5 py-3 font-mono font-bold text-text-primary">{q.symbol}</td>
+                  <td className="px-5 py-3"><div className="font-semibold text-text-primary">{q.company_name || q.symbol}</div><div className="font-mono text-[10px] text-text-muted">{q.symbol} · NSE</div></td>
                   <td className="px-5 py-3 font-mono font-bold text-brand-blue">₹{q.ltp?.toFixed(2)}</td>
                   <td className="px-5 py-3 font-mono text-text-secondary">₹{q.open?.toFixed(2) || '—'}</td>
                   <td className="px-5 py-3 font-mono text-brand-green">₹{q.high?.toFixed(2) || '—'}</td>
@@ -74,7 +74,7 @@ export default function Markets() {
                   </td>
                   <td className="px-5 py-3 font-mono text-text-muted">{q.volume ? (q.volume / 100000).toFixed(1) + 'L' : '—'}</td>
                   <td className="px-5 py-3">
-                    <span className="text-[10px] px-2 py-0.5 rounded border bg-white/5 text-text-muted border-white/10">—</span>
+                    <span className={clsx('text-[10px] px-2 py-0.5 rounded border', q.data_status === 'live' ? 'text-brand-green bg-brand-green/10 border-brand-green/20' : 'text-brand-gold bg-brand-gold/10 border-brand-gold/20')} title={q.data_as_of}> {q.data_status === 'live' ? 'Angel One live' : 'Last available'} </span>
                   </td>
                 </tr>
               ))}
@@ -83,7 +83,7 @@ export default function Markets() {
         )}
         {!isLoading && !isError && quotes.length === 0 && (
           <div className="p-8 text-center text-text-muted text-sm">
-            {isError ? 'Market feed unavailable. Check provider configuration and container logs.' : marketOpen ? 'No quotes received yet. The provider may be warming up.' : 'Market closed — quotes will refresh during NSE hours (9:15 AM – 3:30 PM IST)'}
+            {isError ? 'Market feed unavailable. Angel One did not return a verified response.' : marketOpen ? 'No verified quotes received yet. Check the provider status.' : 'Market closed — last verified quotes remain available when cached.'}
           </div>
         )}
       </div>

@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 from loguru import logger
 
 from app.services.market_data.base import MarketDataProvider, Quote, OHLCV
+from app.services.market_data.cache import get_snapshot, set_snapshot
 from app.config import settings
 
 
@@ -35,7 +36,9 @@ class AngelOneMarketData(MarketDataProvider):
         self.jwt_token = None
         self.instrument_tokens: dict[str, str] = {}  # symbol -> token cache
         self._instrument_master_loaded = False
+        self._instrument_master_lock = asyncio.Lock()
         self._connect_lock = asyncio.Lock()
+        self._request_semaphore = asyncio.Semaphore(3)
         self._max_request_attempts = max(1, int(os.getenv("ANGELONE_MAX_REQUEST_ATTEMPTS", "1")))
         self._reconnect_delay = max(0.0, float(os.getenv("ANGELONE_RECONNECT_DELAY_SECONDS", "1")))
         self._next_connect_attempt = 0.0
@@ -49,28 +52,32 @@ class AngelOneMarketData(MarketDataProvider):
         if self._instrument_master_loaded:
             return True
 
-        try:
-            def download_master():
-                with urlopen(self._instrument_master_url(), timeout=15) as response:
-                    return json.loads(response.read().decode("utf-8"))
+        async with self._instrument_master_lock:
+            if self._instrument_master_loaded:
+                return True
 
-            instruments = await asyncio.to_thread(download_master)
-            for instrument in instruments or []:
-                if instrument.get("exch_seg") != "NSE":
-                    continue
-                symbol = str(instrument.get("symbol", "")).upper()
-                if symbol.endswith("-EQ"):
-                    symbol = symbol[:-3]
-                token = instrument.get("token") or instrument.get("symboltoken")
-                if symbol and token:
-                    self.instrument_tokens.setdefault(symbol, str(token))
+            try:
+                def download_master():
+                    with urlopen(self._instrument_master_url(), timeout=8) as response:
+                        return json.loads(response.read().decode("utf-8"))
 
-            self._instrument_master_loaded = bool(self.instrument_tokens)
-            logger.info("Loaded {} NSE instrument tokens from Angel One scrip master", len(self.instrument_tokens))
-            return self._instrument_master_loaded
-        except Exception as exc:
-            logger.error("Angel One scrip master download failed: {}", exc)
-            return False
+                instruments = await asyncio.to_thread(download_master)
+                for instrument in instruments or []:
+                    if instrument.get("exch_seg") != "NSE":
+                        continue
+                    symbol = str(instrument.get("symbol", "")).upper()
+                    if symbol.endswith("-EQ"):
+                        symbol = symbol[:-3]
+                    token = instrument.get("token") or instrument.get("symboltoken")
+                    if symbol and token:
+                        self.instrument_tokens.setdefault(symbol, str(token))
+
+                self._instrument_master_loaded = bool(self.instrument_tokens)
+                logger.info("Loaded {} NSE instrument tokens from Angel One scrip master", len(self.instrument_tokens))
+                return self._instrument_master_loaded
+            except Exception as exc:
+                logger.error("Angel One scrip master download failed: {}", exc)
+                return False
 
     @staticmethod
     def _sdk_supports_ltp_lookup(smartapi_obj) -> bool:
@@ -116,16 +123,20 @@ class AngelOneMarketData(MarketDataProvider):
             totp_value = totp.now()
 
             # Login
-            login_response = await asyncio.to_thread(
-                self.smartapi.generateSession,
-                settings.angel_client_id,
-                settings.angel_password,
-                totp_value,
+            login_response = await asyncio.wait_for(
+                asyncio.to_thread(
+                    self.smartapi.generateSession,
+                    settings.angel_client_id,
+                    settings.angel_password,
+                    totp_value,
+                ),
+                timeout=10,
             )
 
             if login_response.get("status"):
                 self.jwt_token = login_response.get("data", {}).get("jwtToken")
                 self.connected = True
+                await asyncio.wait_for(self._load_instrument_master(), timeout=10)
                 masked_client = f"***{settings.angel_client_id[-4:]}"
                 logger.info("✓ Angel One connected | Client: {}", masked_client)
                 return True
@@ -138,7 +149,7 @@ class AngelOneMarketData(MarketDataProvider):
             logger.error("SmartAPI SDK not installed. Install: pip install smartapi-python")
             return False
         except Exception as e:
-            logger.error(f"Angel One connection error: {e}")
+            logger.error("Angel One connection error: {!r}", e)
             self.connected = False
             self._next_connect_attempt = asyncio.get_running_loop().time() + 30
             return False
@@ -150,20 +161,21 @@ class AngelOneMarketData(MarketDataProvider):
 
     async def _call_with_reconnect(self, operation):
         """Retry one broker request after re-authentication, without retry storms."""
-        for attempt in range(self._max_request_attempts):
-            if not self.connected and not await self.connect():
-                break
-            try:
-                response = await asyncio.to_thread(operation)
-                if response and response.get("status", True):
-                    return response
-                raise ConnectionError("Angel One returned an unsuccessful response")
-            except Exception as exc:
-                self._invalidate_connection()
-                if attempt + 1 < self._max_request_attempts:
-                    logger.warning("Angel One request failed; reconnecting before retry: {}", exc)
-                    if self._reconnect_delay:
-                        await asyncio.sleep(self._reconnect_delay)
+        async with self._request_semaphore:
+            for attempt in range(self._max_request_attempts):
+                if not self.connected and not await self.connect():
+                    break
+                try:
+                    response = await asyncio.to_thread(operation)
+                    if response and response.get("status", True):
+                        return response
+                    raise ConnectionError("Angel One returned an unsuccessful response")
+                except Exception as exc:
+                    self._invalidate_connection()
+                    if attempt + 1 < self._max_request_attempts:
+                        logger.warning("Angel One request failed; reconnecting before retry: {}", exc)
+                        if self._reconnect_delay:
+                            await asyncio.sleep(self._reconnect_delay)
         return None
 
     async def get_quote(self, symbol: str) -> Quote:
@@ -172,9 +184,18 @@ class AngelOneMarketData(MarketDataProvider):
         
         Falls back to Yahoo Finance if Angel One unavailable.
         """
-        if not self.connected and not await self.connect():
+        if not self.connected:
+            try:
+                await asyncio.wait_for(self.connect(), timeout=8)
+            except asyncio.TimeoutError:
+                logger.warning("Angel One connection timed out while fetching {}", symbol)
+            if self.connected:
+                return await self.get_quote(symbol)
             if settings.is_live_trading_allowed:
                 raise ConnectionError("Angel One is unavailable; live trading is halted")
+            cached = get_snapshot("quotes", symbol.strip().upper().removesuffix("-EQ"))
+            if cached:
+                return Quote(**{**cached, "source": "angelone_cached", "timestamp": datetime.fromisoformat(cached["timestamp"])})
             logger.warning("Angel One not connected, falling back to Yahoo Finance")
             return await self._get_quote_yfinance(symbol)
 
@@ -218,7 +239,7 @@ class AngelOneMarketData(MarketDataProvider):
             volume = int(float(ltp_info.get("tradeVolume", 0) or 0))
             change_pct = float(ltp_info.get("percentChange", 0) or 0)
 
-            return Quote(
+            quote = Quote(
                 symbol=symbol,
                 ltp=round(ltp, 2),
                 open=round(open_price, 2),
@@ -230,11 +251,27 @@ class AngelOneMarketData(MarketDataProvider):
                 timestamp=datetime.now(ZoneInfo("Asia/Kolkata")),
                 source="angelone",
             )
+            set_snapshot("quotes", symbol.upper(), {
+                "symbol": quote.symbol,
+                "ltp": quote.ltp,
+                "open": quote.open,
+                "high": quote.high,
+                "low": quote.low,
+                "close": quote.close,
+                "volume": quote.volume,
+                "change_pct": quote.change_pct,
+                "timestamp": quote.timestamp.isoformat(),
+                "source": quote.source,
+            })
+            return quote
 
         except Exception as e:
             logger.error(f"Angel One quote error for {symbol}: {e}")
             if settings.is_live_trading_allowed:
                 raise ConnectionError(f"Angel One quote unavailable for {symbol}; live trading is halted") from e
+            cached = get_snapshot("quotes", symbol.strip().upper().removesuffix("-EQ"))
+            if cached:
+                return Quote(**{**cached, "source": "angelone_cached", "timestamp": datetime.fromisoformat(cached["timestamp"])})
             return await self._get_quote_yfinance(symbol)
 
     async def get_ohlcv(
@@ -248,13 +285,25 @@ class AngelOneMarketData(MarketDataProvider):
         Falls back to Yahoo Finance if unavailable.
         """
         if not self.connected:
+            try:
+                await asyncio.wait_for(self.connect(), timeout=8)
+            except asyncio.TimeoutError:
+                logger.warning("Angel One connection timed out while fetching candles for {}", symbol)
+            if self.connected:
+                return await self.get_ohlcv(symbol, period, interval)
             if settings.is_live_trading_allowed:
                 raise ConnectionError("Angel One is unavailable; live trading is halted")
+            cached = get_snapshot("ohlcv", f"{symbol.upper()}:{interval}")
+            if cached:
+                return [OHLCV(**{**candle, "timestamp": datetime.fromisoformat(candle["timestamp"])}) for candle in cached]
             return await self._get_ohlcv_yfinance(symbol, period, interval)
 
         try:
             token = await self._get_instrument_token(symbol)
             if not token:
+                cached = get_snapshot("ohlcv", f"{symbol.upper()}:{interval}")
+                if cached:
+                    return [OHLCV(**{**candle, "timestamp": datetime.fromisoformat(candle["timestamp"])}) for candle in cached]
                 return await self._get_ohlcv_yfinance(symbol, period, interval)
 
             # Map period/interval to Angel One parameters
@@ -267,19 +316,23 @@ class AngelOneMarketData(MarketDataProvider):
                     "symboltoken": token,
                     "interval": self._angel_interval(interval),
                     "fromdate": from_date,
-                    "todate": datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%d-%m-%Y"),
+                    "todate": datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%d-%m-%Y %H:%M"),
                 })
             )
 
             if not candle_data or not candle_data.get("data"):
                 logger.warning(f"No OHLCV data for {symbol}, falling back")
+                cached = get_snapshot("ohlcv", f"{symbol.upper()}:{interval}")
+                if cached:
+                    return [OHLCV(**{**candle, "timestamp": datetime.fromisoformat(candle["timestamp"])}) for candle in cached]
                 return await self._get_ohlcv_yfinance(symbol, period, interval)
 
             candles = []
             for candle in candle_data["data"]:
                 try:
+                    timestamp = str(candle[0]).replace("Z", "+00:00")
                     ohlcv = OHLCV(
-                        timestamp=datetime.fromisoformat(candle[0]),
+                        timestamp=datetime.fromisoformat(timestamp),
                         open=float(candle[1]),
                         high=float(candle[2]),
                         low=float(candle[3]),
@@ -291,12 +344,27 @@ class AngelOneMarketData(MarketDataProvider):
                     logger.debug(f"Skipping invalid candle: {e}")
                     continue
 
+            if candles:
+                cache_key = f"{symbol.upper()}:{interval}"
+                existing = get_snapshot("ohlcv", cache_key) or []
+                merged = {candle["timestamp"]: candle for candle in existing}
+                merged.update({candle.timestamp.isoformat(): {
+                    "timestamp": candle.timestamp.isoformat(), "open": candle.open,
+                    "high": candle.high, "low": candle.low, "close": candle.close,
+                    "volume": candle.volume,
+                } for candle in candles})
+                set_snapshot("ohlcv", cache_key, [
+                    merged[timestamp] for timestamp in sorted(merged)[-5000:]
+                ])
             return candles
 
         except Exception as e:
             logger.error(f"Angel One OHLCV error for {symbol}: {e}")
             if settings.is_live_trading_allowed:
                 raise ConnectionError(f"Angel One OHLCV unavailable for {symbol}; live trading is halted") from e
+            cached = get_snapshot("ohlcv", f"{symbol.upper()}:{interval}")
+            if cached:
+                return [OHLCV(**{**candle, "timestamp": datetime.fromisoformat(candle["timestamp"])}) for candle in cached]
             return await self._get_ohlcv_yfinance(symbol, period, interval)
 
     async def is_market_open(self) -> bool:
@@ -322,13 +390,14 @@ class AngelOneMarketData(MarketDataProvider):
         Get Angel One instrument token for a symbol.
         Tokens are cached to reduce API calls.
         """
-        if symbol in self.instrument_tokens:
-            return self.instrument_tokens[symbol]
+        normalized_symbol = symbol.strip().upper().removesuffix("-EQ")
+        if normalized_symbol in self.instrument_tokens:
+            return self.instrument_tokens[normalized_symbol]
 
         if not await self._load_instrument_master():
             return None
 
-        return self.instrument_tokens.get(symbol)
+        return self.instrument_tokens.get(normalized_symbol)
 
     @staticmethod
     def _angel_interval(interval: str) -> str:
@@ -365,7 +434,7 @@ class AngelOneMarketData(MarketDataProvider):
         }
         
         from_date = period_map.get(period, now - timedelta(days=30))
-        return from_date.strftime("%d-%m-%Y")
+        return from_date.strftime("%d-%m-%Y") + " 09:15"
 
     # =========================================================
     # Fallback: Yahoo Finance
@@ -374,32 +443,12 @@ class AngelOneMarketData(MarketDataProvider):
     async def _get_quote_yfinance(self, symbol: str) -> Quote:
         """Fallback to Yahoo Finance when Angel One unavailable."""
         try:
-            import yfinance as yf
-            
-            ticker = yf.Ticker(f"{symbol}.NS")
-            info = ticker.fast_info
-            hist = ticker.history(period="1d", interval="1m")
+            from app.services.market_data.yfinance_provider import YFinanceProvider
 
-            ltp = float(info.last_price) if hasattr(info, 'last_price') else 0.0
-            open_p = float(hist['Open'].iloc[0]) if not hist.empty else ltp
-            high = float(hist['High'].max()) if not hist.empty else ltp
-            low = float(hist['Low'].min()) if not hist.empty else ltp
-            close = float(hist['Close'].iloc[-1]) if not hist.empty else ltp
-            volume = int(hist['Volume'].sum()) if not hist.empty else 0
-            prev_close = float(info.previous_close) if hasattr(info, 'previous_close') else ltp
-            change_pct = ((ltp - prev_close) / prev_close * 100) if prev_close else 0.0
-
-            return Quote(
-                symbol=symbol,
-                ltp=round(ltp, 2),
-                open=round(open_p, 2),
-                high=round(high, 2),
-                low=round(low, 2),
-                close=round(close, 2),
-                volume=volume,
-                change_pct=round(change_pct, 2),
-                timestamp=datetime.now(ZoneInfo("Asia/Kolkata")),
-            )
+            quote = await asyncio.to_thread(YFinanceProvider._fetch_quote, symbol)
+            if quote.source == "demo":
+                raise ConnectionError(f"No verified market quote available for {symbol}")
+            return quote
         except Exception as e:
             logger.error(f"Yahoo Finance fallback failed for {symbol}: {e}")
             raise
@@ -412,23 +461,15 @@ class AngelOneMarketData(MarketDataProvider):
     ) -> list[OHLCV]:
         """Fallback to Yahoo Finance for OHLCV data."""
         try:
-            import yfinance as yf
-            
-            ticker = yf.Ticker(f"{symbol}.NS")
-            hist = ticker.history(period=period, interval=interval)
+            from app.services.market_data.yfinance_provider import YFinanceProvider
 
-            candles = []
-            for ts, row in hist.iterrows():
-                ohlcv = OHLCV(
-                    timestamp=ts.to_pydatetime().replace(tzinfo=ZoneInfo("Asia/Kolkata")),
-                    open=float(row["Open"]),
-                    high=float(row["High"]),
-                    low=float(row["Low"]),
-                    close=float(row["Close"]),
-                    volume=int(row["Volume"]),
-                )
-                candles.append(ohlcv)
-
+            candles = await asyncio.to_thread(
+                YFinanceProvider._fetch_ohlcv,
+                symbol,
+                period,
+                interval,
+                False,
+            )
             return candles
         except Exception as e:
             logger.error(f"Yahoo Finance OHLCV fallback failed for {symbol}: {e}")

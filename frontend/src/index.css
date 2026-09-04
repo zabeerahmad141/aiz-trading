@@ -30,10 +30,9 @@ select option:hover {
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
 
 .glass-card {
-  background: rgba(13, 21, 38, 0.85);
-  backdrop-filter: blur(20px);
-  border: 1px solid var(--border);
-  border-radius: 14px;
+  background: #101923;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 8px;
 }
 
 input,
@@ -43,9 +42,7 @@ textarea {
 }
 
 .gradient-text {
-  background: linear-gradient(90deg, var(--blue), var(--gold));
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
+  color: var(--blue);
 }
 
 .pulse-dot {

@@ -51,7 +51,7 @@ function CandleChart({ symbol = 'RELIANCE', interval, view }: { symbol?: string;
     }) : null;
     if (volumeSeries) chart.priceScale('').applyOptions({ scaleMargins: { top: 0.82, bottom: 0.02 } });
 
-    // Keep the chart empty when the provider has no data, such as after market close.
+    // Render only provider candles; no generated incremental series is used.
     const candles = ohlcvData?.candles;
     const data: any[] = candles && candles.length > 5 ? candles : [];
     if (!data.length) return () => chart.remove();
@@ -74,7 +74,7 @@ function CandleChart({ symbol = 'RELIANCE', interval, view }: { symbol?: string;
     return () => { chart.remove(); ro.disconnect(); };
   }, [ohlcvData, view]);
 
-  return <div ref={ref} className={!ohlcvData?.candles?.length ? 'h-[320px] flex items-center justify-center text-xs text-text-muted' : 'h-[320px]'}>{!ohlcvData?.candles?.length && <span className="animate-pulse">No candles available for this symbol.</span>}</div>;
+  return <div ref={ref} className={!ohlcvData?.candles?.length ? 'h-[320px] flex items-center justify-center text-xs text-text-muted' : 'h-[320px]'}>{!ohlcvData?.candles?.length && <span>{'No verified candles available for this symbol.'}</span>}</div>;
 }
 
 // ── AI Predictions panel ─────────────────────────────────────────────────────
@@ -89,9 +89,8 @@ function AIPredictions({ marketOpen }: { marketOpen: boolean }) {
         <span className="text-[10px] text-text-muted">Next 30 min</span>
       </div>
       <div className="px-4 py-6 text-center text-xs text-text-muted">
-        <div className="relative mx-auto mb-3 w-14 h-14 rounded-full border border-brand-blue/30 flex items-center justify-center">
-          <span className="absolute inset-0 rounded-full border border-brand-blue/20 animate-ping" />
-          <Brain size={18} className="text-brand-blue" />
+        <div className="relative mx-auto mb-3 w-10 h-10 rounded border border-white/15 bg-white/[0.04] flex items-center justify-center">
+          <Brain size={16} className="text-text-secondary" />
         </div>
         <div className="text-text-secondary">{marketOpen ? 'Waiting for the next model signal.' : 'The model is resting between sessions.'}</div>
         <div className="mt-1 text-[10px]">Live predictions will appear automatically when signals are published.</div>
@@ -223,7 +222,7 @@ export default function Dashboard() {
   const { data: botStatus } = useQuery({ queryKey: ['botStatus'], queryFn: () => getBotStatus().then(r => r.data), refetchInterval: 5000 });
   const { data: positions } = useQuery({ queryKey: ['positions'], queryFn: () => getOpenPositions().then(r => r.data), refetchInterval: 5000 });
   const { data: trades } = useQuery({ queryKey: ['trades'], queryFn: () => getTradeHistory().then(r => r.data) });
-  const { data: quotes = [] } = useQuery({
+  const { data: quotes = [], isError: quotesError } = useQuery({
     queryKey: ['quotes'],
     queryFn: () => getQuotes().then(r => r.data),
     refetchInterval: 30000,
@@ -365,7 +364,7 @@ export default function Dashboard() {
           <div className="px-4 py-3 border-b border-[var(--border)] flex items-center justify-between">
             <div className="flex items-center gap-2 text-sm font-semibold">
               <span className="w-6 h-6 rounded bg-brand-blue/10 flex items-center justify-center"><TrendingUp size={12} className="text-brand-blue" /></span>
-              <select value={chartSymbol} onChange={event => setChartSymbol(event.target.value)} className="bg-transparent text-sm font-semibold text-text-primary outline-none"><option value="RELIANCE">RELIANCE · NSE</option>{symbols.filter(symbol => symbol !== 'RELIANCE').map(symbol => <option key={symbol} value={symbol}>{symbol} · NSE</option>)}</select>
+              <select value={chartSymbol} onChange={event => setChartSymbol(event.target.value)} className="bg-transparent text-sm font-semibold text-text-primary outline-none"><option value="RELIANCE">Reliance Industries (RELIANCE) · NSE</option>{symbols.filter(symbol => symbol !== 'RELIANCE').map(symbol => <option key={symbol} value={symbol}>{({ TCS: 'Tata Consultancy Services', HDFCBANK: 'HDFC Bank', INFY: 'Infosys', WIPRO: 'Wipro', ICICIBANK: 'ICICI Bank', BAJFINANCE: 'Bajaj Finance', SBIN: 'State Bank of India', ITC: 'ITC', KOTAKBANK: 'Kotak Mahindra Bank' } as Record<string, string>)[symbol] || symbol} ({symbol}) · NSE</option>)}</select>
             </div>
             <div className="flex gap-1">
               {(['candles', 'line', 'area'] as ChartView[]).map((type) => (
@@ -385,12 +384,12 @@ export default function Dashboard() {
           {/* Chart stats bar */}
           <div className="flex gap-6 px-4 py-2.5 border-b border-[var(--border)] flex-wrap">
             {[
-              { l: 'Open', v: formatPrice(selectedQuote?.open) },
-              { l: 'High', v: formatPrice(selectedQuote?.high), c: 'text-brand-green' },
-              { l: 'Low',  v: formatPrice(selectedQuote?.low), c: 'text-brand-red' },
-              { l: 'LTP',  v: formatPrice(selectedQuote?.ltp), c: 'text-brand-blue' },
-              { l: 'Volume', v: selectedQuote?.volume ? selectedQuote.volume.toLocaleString('en-IN') : 'Waiting' },
-              { l: 'Change', v: selectedQuote ? `${selectedQuote.change_pct >= 0 ? '+' : ''}${selectedQuote.change_pct}%` : 'Waiting', c: selectedQuote?.change_pct >= 0 ? 'text-brand-green' : 'text-brand-red' },
+              { l: 'Open', v: quotesError ? 'Unavailable' : formatPrice(selectedQuote?.open) },
+              { l: 'High', v: quotesError ? 'Unavailable' : formatPrice(selectedQuote?.high), c: 'text-brand-green' },
+              { l: 'Low',  v: quotesError ? 'Unavailable' : formatPrice(selectedQuote?.low), c: 'text-brand-red' },
+              { l: 'LTP',  v: quotesError ? 'Unavailable' : formatPrice(selectedQuote?.ltp), c: 'text-brand-blue' },
+              { l: 'Volume', v: quotesError ? 'Unavailable' : selectedQuote?.volume ? selectedQuote.volume.toLocaleString('en-IN') : 'Waiting' },
+              { l: 'Change', v: quotesError ? 'Unavailable' : selectedQuote ? `${selectedQuote.change_pct >= 0 ? '+' : ''}${selectedQuote.change_pct}%` : 'Waiting', c: selectedQuote?.change_pct >= 0 ? 'text-brand-green' : 'text-brand-red' },
             ].map(s => (
               <div key={s.l}>
                 <div className="text-[9px] uppercase tracking-wider text-text-muted">{s.l}</div>
@@ -403,7 +402,7 @@ export default function Dashboard() {
             {[
               { l: `Change: ${selectedQuote ? `${selectedQuote.change_pct}%` : 'Waiting'}`, c: 'text-brand-blue bg-brand-blue/10 border-brand-blue/20' },
               { l: `Close: ${formatPrice(selectedQuote?.close)}`, c: 'text-brand-gold bg-brand-gold/10 border-brand-gold/20' },
-              { l: `Updated: ${selectedQuote ? new Date(selectedQuote.timestamp).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : 'Waiting'}`, c: 'text-brand-green bg-brand-green/10 border-brand-green/20' },
+              { l: `${selectedQuote?.data_status === 'live' ? 'Live' : 'Last available'}: ${selectedQuote ? new Date(selectedQuote.timestamp).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : 'Waiting'}`, c: selectedQuote?.data_status === 'live' ? 'text-brand-green bg-brand-green/10 border-brand-green/20' : 'text-brand-gold bg-brand-gold/10 border-brand-gold/20' },
             ].map(t => (
               <span key={t.l} className={clsx('text-[10px] font-mono font-semibold px-2 py-0.5 rounded border', t.c)}>{t.l}</span>
             ))}

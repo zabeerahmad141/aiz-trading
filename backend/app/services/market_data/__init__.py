@@ -72,7 +72,18 @@ async def get_active_market_data() -> MarketDataProvider:
         async with _market_data_lock:
             if _market_data_instance is None:
                 _market_data_instance = get_market_data_provider()
-                connected = await _market_data_instance.connect()
+                try:
+                    connected = await asyncio.wait_for(
+                        _market_data_instance.connect(),
+                        timeout=8,
+                    )
+                except asyncio.TimeoutError:
+                    connected = False
+                    if hasattr(_market_data_instance, "_next_connect_attempt"):
+                        _market_data_instance._next_connect_attempt = (
+                            asyncio.get_running_loop().time() + 30
+                        )
+                    logger.warning("Market data provider connection timed out; serving cached data if available")
                 if connected:
                     logger.info("✓ Market data provider connected and ready")
                 else:

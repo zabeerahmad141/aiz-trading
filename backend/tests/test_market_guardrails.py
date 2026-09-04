@@ -112,3 +112,21 @@ def test_market_data_singleton_creation_is_guarded():
 
     assert hasattr(market_data, "_market_data_lock")
     assert market_data._market_data_lock is not None
+
+
+def test_angelone_uses_smartapi_candle_datetime_bounds():
+    from app.services.market_data.angelone import AngelOneMarketData
+
+    provider = AngelOneMarketData()
+    assert provider._calculate_from_date("1d").endswith(" 09:15")
+
+
+def test_angelone_normalizes_instrument_lookup_symbols():
+    from app.services.market_data.angelone import AngelOneMarketData
+
+    provider = AngelOneMarketData()
+    provider.instrument_tokens["RELIANCE"] = "2885"
+
+    import asyncio
+
+    assert asyncio.run(provider._get_instrument_token("reliance-eq")) == "2885"

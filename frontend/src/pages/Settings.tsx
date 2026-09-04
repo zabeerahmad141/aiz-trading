@@ -12,7 +12,8 @@ export default function Settings() {
 
   const config = [
     { section: 'Broker', items: [
-      { label: 'Active Broker', value: status?.broker || 'paper', highlight: true },
+      { label: 'Execution Broker', value: status?.broker || 'paper', highlight: true },
+      { label: 'Configured Broker', value: status?.configured_broker || status?.broker || 'paper' },
       { label: 'Trading Mode', value: status?.mode || 'paper', good: status?.mode === 'paper' },
       { label: 'Market Status', value: status?.market_open ? 'OPEN' : 'CLOSED', good: !!status?.market_open },
       { label: 'Available Balance', value: status?.balance != null ? `₹${status.balance.toLocaleString('en-IN')}` : '—' },
@@ -36,7 +37,7 @@ export default function Settings() {
       { label: 'Market Open', value: '9:15 AM IST' },
       { label: 'Market Close', value: '3:30 PM IST' },
       { label: 'Watchlist', value: 'Nifty 50 (10 stocks)' },
-      { label: 'Data Source', value: 'Yahoo Finance (free)' },
+      { label: 'Market Data Provider', value: status?.data_provider === 'angelone' ? 'Angel One (live NSE)' : status?.data_provider || 'Unknown' },
     ]},
   ];
 
@@ -52,7 +53,7 @@ export default function Settings() {
         status ? 'bg-brand-green/5 border-brand-green/20' : 'bg-brand-red/5 border-brand-red/20'
       )}>
         {status
-          ? <><CheckCircle size={16} className="text-brand-green flex-shrink-0"/><span>Backend API connected · Paper trading active · No broker API key required</span></>
+          ? <><CheckCircle size={16} className="text-brand-green flex-shrink-0"/><span>Backend API connected · Market data: {status.data_provider === 'angelone' ? 'Angel One' : status.data_provider || 'unknown'} · Execution: {status.broker === 'paper' ? 'Paper trading' : status.broker}</span></>
           : <><AlertCircle size={16} className="text-brand-red flex-shrink-0"/><span>Backend API not responding — check if backend container is running</span></>
         }
       </div>

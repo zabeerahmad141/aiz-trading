@@ -208,6 +208,7 @@ class YFinanceProvider(MarketDataProvider):
         symbol: str,
         period: str,
         interval: str,
+        allow_demo: bool = True,
     ) -> list[OHLCV]:
         try:
             import yfinance as yf
@@ -216,8 +217,8 @@ class YFinanceProvider(MarketDataProvider):
             hist = ticker.history(period=period, interval=interval)
 
             if hist.empty:
-                logger.warning(f"Yahoo Finance returned no OHLCV history for {symbol}; using demo fallback candles.")
-                return YFinanceProvider._demo_ohlcv(symbol, interval)
+                logger.warning(f"Yahoo Finance returned no OHLCV history for {symbol}")
+                return YFinanceProvider._demo_ohlcv(symbol, interval) if allow_demo else []
 
             candles = []
             for ts, row in hist.iterrows():
@@ -233,8 +234,8 @@ class YFinanceProvider(MarketDataProvider):
 
             return candles
         except Exception as e:
-            logger.warning(f"Yahoo Finance OHLCV error for {symbol}: {e}; using demo fallback candles.")
-            return YFinanceProvider._demo_ohlcv(symbol, interval)
+            logger.warning(f"Yahoo Finance OHLCV error for {symbol}: {e}")
+            return YFinanceProvider._demo_ohlcv(symbol, interval) if allow_demo else []
 
     async def is_market_open(self) -> bool:
         """Check if NSE market is currently open."""

@@ -6,6 +6,7 @@ import { Search, Star, TrendingUp, TrendingDown, RefreshCw } from 'lucide-react'
 
 interface ScreenerStock {
   symbol: string;
+  company_name?: string;
   ltp: number;
   change_pct: number;
   rsi: number;
@@ -37,6 +38,9 @@ export default function Screener() {
     queryKey: ['screener'],
     queryFn: () => getScreener().then(r => r.data),
     staleTime: 5 * 60 * 1000,   // 5 min cache
+    refetchInterval: 5 * 60 * 1000,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
     retry: 1,
   });
 
@@ -94,7 +98,7 @@ export default function Screener() {
       <div className="glass-card overflow-hidden">
         <div className="px-5 py-3 border-b border-[var(--border)] flex items-center justify-between">
           <span className="text-sm font-semibold">
-            {isLoading ? 'Scanning market...' : `${stocks.length} stocks selected`}
+            {isLoading ? 'Loading screener...' : `${stocks.length} stocks selected`}
           </span>
           {!isLoading && data && (
             <span className="text-xs text-text-muted">
@@ -105,8 +109,8 @@ export default function Screener() {
 
         {isLoading && (
           <div className="p-10 text-center">
-            <div className="text-brand-blue animate-pulse text-sm">Scanning {(data as any)?.total_scanned || 40} stocks...</div>
-            <div className="text-text-muted text-xs mt-2">Fetching OHLCV, computing indicators. Takes ~30 seconds.</div>
+            <div className="text-brand-blue animate-pulse text-sm">Loading latest screener results...</div>
+            <div className="text-text-muted text-xs mt-2">The previous result will remain available between scheduled scans.</div>
           </div>
         )}
 
@@ -122,7 +126,7 @@ export default function Screener() {
           <table className="w-full text-[12px]">
             <thead>
               <tr className="text-text-muted text-[10px] uppercase tracking-wider">
-                {['Rank','Symbol','LTP','Change','RSI','Vol Ratio','Score','Reason','Action'].map(h => (
+                {['Rank','Company','LTP','Change','RSI','Vol Ratio','Score','Reason','Action'].map(h => (
                   <th key={h} className="text-left px-4 py-2.5 border-b border-[var(--border)] font-semibold">{h}</th>
                 ))}
               </tr>
@@ -137,7 +141,7 @@ export default function Screener() {
                       i === 0 ? 'bg-brand-gold text-black' : i === 1 ? 'bg-white/20 text-text-primary' : 'text-text-muted'
                     )}>#{i+1}</span>
                   </td>
-                  <td className="px-4 py-3 font-mono font-bold text-text-primary">{s.symbol}</td>
+                  <td className="px-4 py-3"><div className="font-semibold text-text-primary">{s.company_name || s.symbol}</div><div className="font-mono text-[10px] text-text-muted">{s.symbol} · NSE</div></td>
                   <td className="px-4 py-3 font-mono font-bold text-brand-blue">₹{s.ltp?.toFixed(2)}</td>
                   <td className={clsx('px-4 py-3 font-mono font-bold flex items-center gap-1',
                     s.change_pct >= 0 ? 'text-brand-green' : 'text-brand-red'

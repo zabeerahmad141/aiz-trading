@@ -12,6 +12,7 @@ from app.database import init_db, engine
 from app.routers import auth, trading, market, portfolio, users, websocket, backtest
 from app.core.startup import create_admin_user, log_safe_configuration
 from app.services.risk.supervisor import ExitSupervisor
+from app.services.market_data import get_active_market_data
 
 
 @asynccontextmanager
@@ -23,10 +24,22 @@ async def lifespan(app: FastAPI):
     log_safe_configuration()
     app.state.redis = await aioredis.from_url(settings.redis_url, decode_responses=True)
     app.state.exit_supervisor = asyncio.create_task(ExitSupervisor().run())
+    async def warm_market_data():
+        try:
+            provider = await get_active_market_data()
+            if getattr(provider, "connected", True):
+                logger.info("Market data provider warmed up and ready")
+            else:
+                logger.warning("Market data provider is not connected; cached data will be used if available")
+        except Exception as exc:
+            logger.warning("Market data provider warm-up failed; requests will retry lazily: {}", exc)
+
+    app.state.market_data_warmup = asyncio.create_task(warm_market_data())
     logger.info("AI Z is ready.")
     yield
     # ── Shutdown ─────────────────────────────────────────────
     app.state.exit_supervisor.cancel()
+    app.state.market_data_warmup.cancel()
     try:
         await app.state.exit_supervisor
     except asyncio.CancelledError:

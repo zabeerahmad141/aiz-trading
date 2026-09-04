@@ -1,4 +1,5 @@
 import asyncio
+import time
 
 from fastapi import APIRouter, Depends, HTTPException
 from loguru import logger
@@ -7,6 +8,7 @@ from app.core.security import get_current_user
 from app.models.user import User
 from app.config import settings
 from app.services.market_data.yfinance_provider import YFinanceProvider
+from app.services.market_data.cache import get_snapshot, set_snapshot
 
 router = APIRouter()
 
@@ -20,6 +22,19 @@ NIFTY500_POOL = [
     "EICHERMOT", "HEROMOTOCO", "APOLLOHOSP", "DIVISLAB", "BRITANNIA",
 ]
 
+COMPANY_NAMES = {
+    "RELIANCE": "Reliance Industries",
+    "TCS": "Tata Consultancy Services",
+    "HDFCBANK": "HDFC Bank",
+    "INFY": "Infosys",
+    "WIPRO": "Wipro",
+    "ICICIBANK": "ICICI Bank",
+    "BAJFINANCE": "Bajaj Finance",
+    "SBIN": "State Bank of India",
+    "ITC": "ITC",
+    "KOTAKBANK": "Kotak Mahindra Bank",
+}
+
 
 def _get_yfinance():
     import yfinance as yf
@@ -32,9 +47,10 @@ async def get_quotes(current_user: User = Depends(get_current_user)):
     market_data = await get_active_market_data()
     async def fetch_quote(symbol: str):
         try:
-            quote = await asyncio.wait_for(market_data.get_quote(symbol), timeout=8)
+            quote = await asyncio.wait_for(market_data.get_quote(symbol), timeout=12)
             return {
                 "symbol": quote.symbol,
+                "company_name": COMPANY_NAMES.get(quote.symbol.upper(), quote.symbol),
                 "ltp": quote.ltp,
                 "open": quote.open,
                 "high": quote.high,
@@ -44,6 +60,8 @@ async def get_quotes(current_user: User = Depends(get_current_user)):
                 "change_pct": quote.change_pct,
                 "timestamp": quote.timestamp.isoformat(),
                 "source": quote.source,
+                "data_status": "live" if quote.source == "angelone" else "historical_or_fallback",
+                "data_as_of": quote.timestamp.isoformat(),
             }
         except Exception as exc:
             logger.warning("Quote unavailable for {}: {}", symbol, exc)
@@ -103,6 +121,10 @@ async def stock_screener(current_user: User = Depends(get_current_user)):
       - Daily change > 0% (positive momentum)
     Updates the recommended watchlist automatically.
     """
+    cached = get_snapshot("screener", "latest")
+    if cached and time.time() - cached.get("updated_at", 0) < 300:
+        return cached["data"]
+
     results = []
     try:
         yf = _get_yfinance()
@@ -147,6 +169,7 @@ async def stock_screener(current_user: User = Depends(get_current_user)):
             if score >= 50:  # At least 2 criteria met
                 results.append({
                     "symbol":     symbol,
+                    "company_name": COMPANY_NAMES.get(symbol, symbol),
                     "ltp":        round(ltp, 2),
                     "change_pct": round(change_pct, 2),
                     "rsi":        round(rsi, 1),
@@ -162,8 +185,16 @@ async def stock_screener(current_user: User = Depends(get_current_user)):
 
     results.sort(key=lambda x: x["score"], reverse=True)
     if not results:
-        results = _demo_screener_results()
-    return {"screened": results[:15], "total_scanned": len(NIFTY500_POOL)}
+        cached = get_snapshot("screener", "latest")
+        if cached:
+            return cached["data"]
+        response = {"screened": [], "total_scanned": len(NIFTY500_POOL)}
+        set_snapshot("screener", "latest", {"updated_at": time.time(), "data": response})
+        return response
+
+    response = {"screened": results[:15], "total_scanned": len(NIFTY500_POOL)}
+    set_snapshot("screener", "latest", {"updated_at": time.time(), "data": response})
+    return response
 
 
 def _build_reason(rsi: float, vol_ratio: float, above_ema9: bool, above_ema21: bool) -> str:
@@ -183,6 +214,7 @@ def _demo_screener_results() -> list[dict]:
         ema21 = round(quote.ltp * 0.99, 2)
         results.append({
             "symbol": symbol,
+            "company_name": COMPANY_NAMES.get(symbol, symbol),
             "ltp": quote.ltp,
             "change_pct": quote.change_pct,
             "rsi": 50.0,

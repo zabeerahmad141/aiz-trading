@@ -331,6 +331,9 @@ async def bot_status(
         "is_running": True,
         "mode": settings.trading_mode,
         "broker": effective_broker,
+        "configured_broker": settings.active_broker,
+        "data_provider": settings.data_provider,
+        "live_trading_allowed": settings.is_live_trading_allowed,
         "market_open": (
             await broker.is_market_open()
         ),

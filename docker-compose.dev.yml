@@ -44,6 +44,8 @@ services:
       POSTGRES_HOST: postgresql
       REDIS_HOST: redis
       APP_ENV: production
+    user: root
+    command: ["sh", "-c", "chown -R appuser:appuser /app/data && exec su appuser -s /bin/sh -c 'uvicorn app.main:app --host 0.0.0.0 --port 8000'"]
     volumes:
       - paper_state:/app/data
     depends_on:
